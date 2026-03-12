@@ -27,6 +27,9 @@ Thumbs.db
 # === Secrets ===
 .env
 
+# === Service working copy ===
+news_crawler/
+
 # === Archives ===
 *.zip
 *.tar.gz
