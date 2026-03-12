@@ -1,0 +1,33 @@
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+
+# === Data / Logs ===
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+
+# === IDE ===
+.idea/
+.vscode/
+
+# === OS ===
+nul
+Thumbs.db
+.DS_Store
+
+# === Secrets ===
+.env
+
+# === Archives ===
+*.zip
+*.tar.gz
+*.rar
