@@ -1,0 +1,121 @@
+"""
+数据模型 - SQLite 表结构定义与初始化
+"""
+import sqlite3
+import os
+import hashlib
+from config import DB_PATH, DATA_DIR
+from storage import normalize_url
+
+
+def init_db():
+    """初始化数据库，创建表结构"""
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cursor = conn.cursor()
+
+        # 开启 WAL 模式：允许读写并发，避免 database is locked
+        cursor.execute("PRAGMA journal_mode=WAL")
+
+        # ========== 主表：新闻条目 ==========
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS news (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                url_hash    TEXT UNIQUE,
+                title       TEXT NOT NULL,
+                url         TEXT NOT NULL,
+                source      TEXT NOT NULL,
+                source_name TEXT,
+                summary     TEXT DEFAULT '',
+                content     TEXT DEFAULT '',
+                category    TEXT DEFAULT '',
+                rank        INTEGER DEFAULT 0,
+                pub_time    TEXT DEFAULT '',
+                crawl_time  TEXT NOT NULL,
+                language    TEXT DEFAULT 'zh',
+                is_read     INTEGER DEFAULT 0,
+                extra_json  TEXT DEFAULT '{}',
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ========== 爬取日志表 ==========
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS crawl_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                source      TEXT NOT NULL,
+                source_name TEXT DEFAULT '',
+                start_time  TEXT NOT NULL,
+                end_time    TEXT,
+                status      TEXT NOT NULL DEFAULT 'running',
+                news_count  INTEGER DEFAULT 0,
+                error_msg   TEXT DEFAULT '',
+                duration_ms INTEGER DEFAULT 0
+            )
+        """)
+
+        # ========== 兼容旧数据库：逐列迁移 ==========
+        _migrate_column(cursor, "news", "rank", "INTEGER DEFAULT 0")
+        _migrate_column(cursor, "news", "content", "TEXT DEFAULT ''")
+        _migrate_column(cursor, "news", "is_read", "INTEGER DEFAULT 0")
+        _migrate_column(cursor, "news", "extra_json", "TEXT DEFAULT '{}'")
+        _migrate_column(cursor, "news", "url_hash", "TEXT")
+
+        # ========== 回填旧数据的 url_hash ==========
+        _backfill_url_hash(cursor)
+
+        # ========== 索引 ==========
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_source ON news(source)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_crawl_time ON news(crawl_time)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_language ON news(language)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_time ON news(pub_time)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rank ON news(rank)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_url_hash ON news(url_hash)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_is_read ON news(is_read)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_crawl_log_source ON crawl_log(source)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_crawl_log_time ON crawl_log(start_time)")
+
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"[models] 数据库初始化完成: {DB_PATH}")
+
+
+def _migrate_column(cursor, table: str, column: str, col_type: str):
+    """安全添加列，已存在则跳过"""
+    try:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+
+
+def _backfill_url_hash(cursor):
+    """
+    回填旧数据的 url_hash。
+    只处理 url_hash 为 NULL 的行，避免重复执行开销。
+    使用 storage.normalize_url 确保与写入时的归一化逻辑一致。
+    """
+    cursor.execute("SELECT id, url FROM news WHERE url_hash IS NULL")
+    rows = cursor.fetchall()
+    if not rows:
+        return
+
+    for row_id, url in rows:
+        normalized = normalize_url(url)
+        url_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        try:
+            cursor.execute(
+                "UPDATE news SET url_hash = ? WHERE id = ?",
+                (url_hash, row_id)
+            )
+        except sqlite3.IntegrityError:
+            # 如果 hash 冲突（同一 URL 的旧重复行），删除这条重复数据
+            cursor.execute("DELETE FROM news WHERE id = ?", (row_id,))
+
+    print(f"[models] 回填 url_hash: {len(rows)} 行")
+
+
+if __name__ == "__main__":
+    init_db()
