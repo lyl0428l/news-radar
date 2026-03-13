@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+
+# Data (运行时生成，不打入镜像)
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+nul
+Thumbs.db
+.DS_Store
+
+# Secrets
+.env
+
+# Service working copy
+news_crawler/
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+
+# Docs
+README.md
+
+# Windows scripts (容器内用不到)
+*.bat
+*.ps1

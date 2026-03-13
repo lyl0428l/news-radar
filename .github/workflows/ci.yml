@@ -1,0 +1,201 @@
+# ============================================
+# CI/CD 流水线 - 代码检查 → Docker 构建 → 推送镜像 → 部署服务器
+# ============================================
+#
+# 触发条件：
+#   - 推送到 main 分支
+#   - 提交 Pull Request 到 main 分支
+#
+# 需要在 GitHub 仓库 Settings → Secrets and variables → Actions 中配置：
+#   - DOCKERHUB_USERNAME   : Docker Hub 用户名
+#   - DOCKERHUB_TOKEN      : Docker Hub Access Token
+#   - DEPLOY_HOST          : 目标服务器 IP 地址
+#   - DEPLOY_USER          : 目标服务器 SSH 用户名
+#   - DEPLOY_SSH_KEY       : 目标服务器 SSH 私钥
+#   - DEPLOY_PATH          : 服务器上的部署目录（如 /opt/news-radar）
+#
+# ============================================
+
+name: CI/CD Pipeline
+
+# ==================== 触发条件 ====================
+on:
+  push:
+    branches: [ main ]           # 推送到 main 分支时触发
+  pull_request:
+    branches: [ main ]           # PR 到 main 分支时触发
+  workflow_dispatch:              # 支持手动触发（GitHub Actions 页面点按钮）
+
+# ==================== 环境变量 ====================
+env:
+  DOCKER_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/news-radar  # Docker Hub 镜像名
+  PYTHON_VERSION: "3.11"                                       # Python 版本
+
+# ==================== 任务定义 ====================
+jobs:
+
+  # ========================================
+  # Job 1: 代码检查（每次推送和 PR 都会运行）
+  # ========================================
+  lint:
+    name: Code Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      # 步骤 1：拉取代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 步骤 2：安装 Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip                               # 缓存 pip 依赖，加速后续构建
+
+      # 步骤 3：安装依赖
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8                       # 代码风格检查工具
+
+      # 步骤 4：代码风格检查
+      - name: Run flake8 lint
+        run: |
+          flake8 . \
+            --max-line-length=120 \
+            --exclude=.venv,__pycache__,.git,data,logs,news_crawler \
+            --ignore=E402,W503,E501 \
+            --count --statistics
+
+      # 步骤 5：检查所有模块能否正常导入
+      - name: Verify imports
+        run: |
+          python -c "
+          import importlib, sys
+          modules = ['config', 'models', 'storage', 'main', 'scheduler']
+          failed = []
+          for mod in modules:
+              try:
+                  importlib.import_module(mod)
+              except Exception as e:
+                  failed.append(f'{mod}: {e}')
+          if failed:
+              print('Import failures:')
+              for f in failed:
+                  print(f'  - {f}')
+              sys.exit(1)
+          print('All core modules imported successfully')
+          "
+
+  # ========================================
+  # Job 2: 构建 Docker 镜像并推送到 Docker Hub
+  #         仅在 push 到 main 分支时执行
+  # ========================================
+  build-and-push:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: lint                                    # 依赖 lint 通过后才执行
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'  # 只在 push main 时触发
+
+    steps:
+      # 步骤 1：拉取代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 步骤 2：设置 Docker Buildx（支持多平台构建和缓存）
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 步骤 3：登录 Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 步骤 4：生成镜像标签（用 Git SHA 短哈希 + latest）
+      - name: Generate image tags
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TIMESTAMP=$(date +'%Y%m%d-%H%M%S')
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "timestamp=${TIMESTAMP}" >> $GITHUB_OUTPUT
+
+      # 步骤 5：构建并推送 Docker 镜像
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .                               # 构建上下文为项目根目录
+          push: true                               # 构建完成后推送到仓库
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:latest
+            ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.short_sha }}
+            ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.timestamp }}
+          cache-from: type=gha                     # 使用 GitHub Actions 缓存加速构建
+          cache-to: type=gha,mode=max
+
+      # 步骤 6：输出构建信息
+      - name: Print image info
+        run: |
+          echo "============================================"
+          echo "Docker image pushed successfully!"
+          echo "Image: ${{ env.DOCKER_IMAGE }}"
+          echo "Tags:"
+          echo "  - latest"
+          echo "  - ${{ steps.meta.outputs.short_sha }}"
+          echo "  - ${{ steps.meta.outputs.timestamp }}"
+          echo "============================================"
+
+  # ========================================
+  # Job 3: 部署到目标服务器
+  #         通过 SSH 连接服务器，拉取最新镜像并重启容器
+  # ========================================
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    needs: build-and-push                          # 依赖镜像推送完成后才执行
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      # 步骤 1：通过 SSH 连接服务器执行部署
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}          # 服务器 IP
+          username: ${{ secrets.DEPLOY_USER }}       # SSH 用户名
+          key: ${{ secrets.DEPLOY_SSH_KEY }}         # SSH 私钥
+          script: |
+            set -e
+
+            echo ">>> 进入部署目录"
+            cd ${{ secrets.DEPLOY_PATH || '/opt/news-radar' }}
+
+            echo ">>> 拉取最新镜像"
+            docker pull ${{ env.DOCKER_IMAGE }}:latest
+
+            echo ">>> 停止旧容器"
+            docker compose down || true
+
+            echo ">>> 启动新容器"
+            docker compose up -d
+
+            echo ">>> 清理旧镜像"
+            docker image prune -f
+
+            echo ">>> 检查容器状态"
+            docker compose ps
+
+            echo ">>> 部署完成!"
+
+      # 步骤 2：部署结果通知（输出到 Actions 日志）
+      - name: Deployment summary
+        run: |
+          echo "============================================"
+          echo "Deployment completed!"
+          echo "Server: ${{ secrets.DEPLOY_HOST }}"
+          echo "Image:  ${{ env.DOCKER_IMAGE }}:latest"
+          echo "Time:   $(date +'%Y-%m-%d %H:%M:%S UTC')"
+          echo "============================================"
