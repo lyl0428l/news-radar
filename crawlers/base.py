@@ -491,6 +491,12 @@ class RSSCrawler(BaseCrawler):
             else:
                 summary = summary[:200]
 
+            # 从 RSS 条目提取作者（feedparser 会解析 dc:creator / author 字段）
+            rss_author = str(entry.get("author", "")).strip()
+            if not rss_author:
+                # 某些 RSS 源使用 dc:creator
+                rss_author = str(entry.get("dc_creator", "")).strip()
+
             results.append(self._make_item(
                 title=title,
                 url=link,
@@ -498,6 +504,7 @@ class RSSCrawler(BaseCrawler):
                 summary=summary,
                 category=self.category,
                 pub_time=self.parse_time(str(entry.get("published", ""))),
+                author=rss_author,
             ))
 
         return results

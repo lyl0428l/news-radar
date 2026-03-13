@@ -80,6 +80,9 @@ class ReutersCrawler(BaseCrawler):
                         clean_summary = (self.clean_text(summary)[:200]
                                          if "<" in summary and ">" in summary
                                          else summary[:200])
+                    # 从 RSS 条目提取作者（Google News RSS 通常不含此字段）
+                    rss_author = str(entry.get("author", "")).strip()
+
                     results.append(self._make_item(
                         title=title,
                         url=link,
@@ -87,6 +90,7 @@ class ReutersCrawler(BaseCrawler):
                         summary=clean_summary,
                         category="Top Stories",
                         pub_time=self.parse_time(pub_time),
+                        author=rss_author,
                     ))
                     rank += 1
                     if rank > 10:

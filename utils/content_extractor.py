@@ -99,7 +99,13 @@ def _extract_author(soup: BeautifulSoup) -> str:
         if tag:
             val = str(tag.get("content", "")).strip()
             if val and not val.isdigit():  # 跳过纯数字 ID（如人民网编辑工号）
-                return val[:100]
+                # 清理 "By " 前缀（NYT 的 byl meta 标签格式为 "By Author Name"）
+                for prefix in ("By ", "by ", "作者：", "作者:"):
+                    if val.startswith(prefix):
+                        val = val[len(prefix):].strip()
+                        break
+                if val:
+                    return val[:100]
 
     # 1b. <meta name="source"> — 人民网等使用（"来源：新华社"）
     source_tag = soup.find("meta", attrs={"name": "source"})
@@ -122,6 +128,9 @@ def _extract_author(soup: BeautifulSoup) -> str:
         ".post_info .author",        # 网易
         ".article-source",           # 搜狐
         ".source",                   # 腾讯
+        "[data-testid='Author']",    # Reuters
+        "[data-testid='Byline']",    # Reuters
+        "a[href*='/authors/']",      # Reuters 作者链接
     ]:
         try:
             el = soup.select_one(selector)
@@ -137,12 +146,26 @@ def _extract_author(soup: BeautifulSoup) -> str:
         except Exception:
             continue
 
-    # 3. JSON-LD
+    # 3. JSON-LD（支持顶层 author 和 @graph 数组中的 author）
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             data = json.loads(script.string or "")
+            # 可能是单个对象或数组（@graph 模式）
+            items_to_check = []
             if isinstance(data, dict):
-                author_data = data.get("author", {})
+                items_to_check.append(data)
+                # Reuters 等使用 @graph 数组
+                graph = data.get("@graph", [])
+                if isinstance(graph, list):
+                    items_to_check.extend(
+                        g for g in graph if isinstance(g, dict)
+                    )
+            elif isinstance(data, list):
+                items_to_check.extend(
+                    d for d in data if isinstance(d, dict)
+                )
+            for obj in items_to_check:
+                author_data = obj.get("author", {})
                 if isinstance(author_data, list) and author_data:
                     author_data = author_data[0]
                 if isinstance(author_data, dict):
