@@ -1,18 +1,15 @@
 # ============================================
-# CI/CD 流水线 - 代码检查 → Docker 构建 → 推送镜像 → 部署服务器
+# CI/CD 流水线 - 代码检查 → Docker 构建 → 推送镜像到 Docker Hub
 # ============================================
 #
 # 触发条件：
 #   - 推送到 main 分支
 #   - 提交 Pull Request 到 main 分支
+#   - 手动触发
 #
 # 需要在 GitHub 仓库 Settings → Secrets and variables → Actions 中配置：
 #   - DOCKERHUB_USERNAME   : Docker Hub 用户名
 #   - DOCKERHUB_TOKEN      : Docker Hub Access Token
-#   - DEPLOY_HOST          : 目标服务器 IP 地址
-#   - DEPLOY_USER          : 目标服务器 SSH 用户名
-#   - DEPLOY_SSH_KEY       : 目标服务器 SSH 私钥
-#   - DEPLOY_PATH          : 服务器上的部署目录（如 /opt/news-radar）
 #
 # ============================================
 
@@ -115,7 +112,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 步骤 4：生成镜像标签（用 Git SHA 短哈希 + latest）
+      # 步骤 4：生成镜像标签（用 Git SHA 短哈希 + 时间戳 + latest）
       - name: Generate image tags
         id: meta
         run: |
@@ -129,7 +126,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .                               # 构建上下文为项目根目录
-          push: true                               # 构建完成后推送到仓库
+          push: true                               # 构建完成后推送到 Docker Hub
           tags: |
             ${{ env.DOCKER_IMAGE }}:latest
             ${{ env.DOCKER_IMAGE }}:${{ steps.meta.outputs.short_sha }}
@@ -148,54 +145,8 @@ jobs:
           echo "  - ${{ steps.meta.outputs.short_sha }}"
           echo "  - ${{ steps.meta.outputs.timestamp }}"
           echo "============================================"
-
-  # ========================================
-  # Job 3: 部署到目标服务器
-  #         通过 SSH 连接服务器，拉取最新镜像并重启容器
-  # ========================================
-  deploy:
-    name: Deploy to Server
-    runs-on: ubuntu-latest
-    needs: build-and-push                          # 依赖镜像推送完成后才执行
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    steps:
-      # 步骤 1：通过 SSH 连接服务器执行部署
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}          # 服务器 IP
-          username: ${{ secrets.DEPLOY_USER }}       # SSH 用户名
-          key: ${{ secrets.DEPLOY_SSH_KEY }}         # SSH 私钥
-          script: |
-            set -e
-
-            echo ">>> 进入部署目录"
-            cd ${{ secrets.DEPLOY_PATH || '/opt/news-radar' }}
-
-            echo ">>> 拉取最新镜像"
-            docker pull ${{ env.DOCKER_IMAGE }}:latest
-
-            echo ">>> 停止旧容器"
-            docker compose down || true
-
-            echo ">>> 启动新容器"
-            docker compose up -d
-
-            echo ">>> 清理旧镜像"
-            docker image prune -f
-
-            echo ">>> 检查容器状态"
-            docker compose ps
-
-            echo ">>> 部署完成!"
-
-      # 步骤 2：部署结果通知（输出到 Actions 日志）
-      - name: Deployment summary
-        run: |
-          echo "============================================"
-          echo "Deployment completed!"
-          echo "Server: ${{ secrets.DEPLOY_HOST }}"
-          echo "Image:  ${{ env.DOCKER_IMAGE }}:latest"
-          echo "Time:   $(date +'%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          echo "To deploy manually on your server, run:"
+          echo "  docker pull ${{ env.DOCKER_IMAGE }}:latest"
+          echo "  docker compose up -d"
           echo "============================================"
