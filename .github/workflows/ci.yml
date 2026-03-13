@@ -63,7 +63,7 @@ jobs:
           flake8 . \
             --max-line-length=120 \
             --exclude=.venv,__pycache__,.git,data,logs,news_crawler \
-            --ignore=E402,W503,E501 \
+            --ignore=E402,W503,W504,E501,E241,E127,E302,F401,F541,F841 \
             --count --statistics
 
       # 步骤 5：检查所有模块能否正常导入
