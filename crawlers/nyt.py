@@ -6,6 +6,8 @@ from crawlers.base import RSSCrawler
 
 class NYTCrawler(RSSCrawler):
 
+    detail_selectors = ["[name='articleBody']", ".meteredContent", ".StoryBodyCompanionColumn", "article"]
+
     def __init__(self):
         super().__init__()
         self.name = "nyt"

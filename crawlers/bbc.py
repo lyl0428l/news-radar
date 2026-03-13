@@ -6,6 +6,8 @@ from crawlers.base import RSSCrawler
 
 class BBCCrawler(RSSCrawler):
 
+    detail_selectors = ["article", "[data-component='text-block']", ".ssrcss-pv1fh0-ArticleWrapper"]
+
     def __init__(self):
         super().__init__()
         self.name = "bbc"

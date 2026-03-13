@@ -7,6 +7,7 @@ import time
 import logging
 import requests
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Optional
@@ -16,7 +17,7 @@ import os
 from email.utils import parsedate_to_datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import USER_AGENTS, CRAWL_TIMEOUT, CRAWL_RETRY, CRAWL_DELAY
+from config import USER_AGENTS, CRAWL_TIMEOUT, CRAWL_RETRY, CRAWL_DELAY, DETAIL_FETCH_TIMEOUT, DETAIL_MAX_WORKERS
 
 TOP_N = 10  # 每个站点只保留 TOP 10
 
@@ -35,11 +36,15 @@ class NewsItem:
     source_name: str = ""
     summary: str = ""
     content: str = ""
+    content_html: str = ""
     category: str = ""
     rank: int = 0
     pub_time: str = ""
     crawl_time: str = ""
     language: str = "zh"
+    images: list = field(default_factory=list)
+    videos: list = field(default_factory=list)
+    thumbnail: str = ""
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -50,11 +55,15 @@ class NewsItem:
             "source_name": self.source_name,
             "summary": self.summary,
             "content": self.content,
+            "content_html": self.content_html,
             "category": self.category,
             "rank": self.rank,
             "pub_time": self.pub_time,
             "crawl_time": self.crawl_time,
             "language": self.language,
+            "images": self.images,
+            "videos": self.videos,
+            "thumbnail": self.thumbnail,
             "extra": self.extra,
         }
 
@@ -138,6 +147,8 @@ class BaseCrawler(ABC):
     def _make_item(self, title: str, url: str, rank: int = 0,
                    summary: str = "", category: str = "",
                    pub_time: str = "", content: str = "",
+                   content_html: str = "", images: Optional[list] = None,
+                   videos: Optional[list] = None, thumbnail: str = "",
                    extra: Optional[dict] = None) -> dict:
         """构造标准新闻条目，rank 为热榜排名（1=最热）"""
         return {
@@ -147,11 +158,15 @@ class BaseCrawler(ABC):
             "source_name": self.display_name,
             "summary": summary.strip() if summary else "",
             "content": content.strip() if content else "",
+            "content_html": content_html.strip() if content_html else "",
             "category": category.strip() if category else "",
             "rank": rank,
             "pub_time": pub_time.strip() if pub_time else "",
             "crawl_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "language": self.language,
+            "images": images or [],
+            "videos": videos or [],
+            "thumbnail": thumbnail.strip() if thumbnail else "",
             "extra": extra or {},
         }
 
@@ -276,6 +291,95 @@ class BaseCrawler(ABC):
 
         return valid
 
+    # ========== 详情页抓取 ==========
+
+    # 子类可覆盖：指定正文容器的 CSS 选择器列表（按优先级）
+    detail_selectors: list = []
+
+    # 子类可覆盖：是否启用详情页抓取（默认启用）
+    enable_detail: bool = True
+
+    def fetch_detail(self, item: dict) -> dict:
+        """
+        抓取单篇新闻详情页，提取正文/图片/视频。
+        返回 {"content", "content_html", "images", "videos", "thumbnail"}。
+        子类可重写此方法实现自定义逻辑。
+        """
+        url = item.get("url", "")
+        if not url:
+            return {}
+        try:
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            if resp is None:
+                return {}
+            return self.parse_detail(resp.text, url)
+        except Exception as e:
+            self.logger.debug(f"[{self.name}] 详情页抓取失败: {url} | {e}")
+            return {}
+
+    def parse_detail(self, html: str, url: str) -> dict:
+        """
+        从详情页 HTML 中提取正文/图片/视频。
+        子类可重写以使用站点特定的选择器。
+        """
+        from utils.content_extractor import extract_content
+        return extract_content(html, url, selectors=self.detail_selectors)
+
+    def _fetch_all_details(self, items: list) -> list:
+        """并发抓取所有条目的详情页，合并到 items 中。
+        已在 DB 中有正文的条目会跳过，避免重复抓取。"""
+        if not items:
+            return items
+
+        # 检查 DB 中哪些 URL 已有正文（优化：跳过重复抓取）
+        skip_urls = set()
+        try:
+            from storage import check_urls_have_content
+            all_urls = [item.get("url", "") for item in items if item.get("url")]
+            skip_urls = check_urls_have_content(all_urls)
+            if skip_urls:
+                self.logger.info(f"[{self.name}] 跳过 {len(skip_urls)} 条已有正文的新闻")
+        except Exception:
+            pass  # 查询失败不影响正常流程
+
+        items_to_fetch = [item for item in items if item.get("url", "") not in skip_urls]
+        items_skipped = [item for item in items if item.get("url", "") in skip_urls]
+
+        def _fetch_one(item):
+            detail = self.fetch_detail(item)
+            if detail:
+                # 只更新非空字段（不覆盖列表页已有的数据）
+                if detail.get("content") and not item.get("content"):
+                    item["content"] = detail["content"]
+                if detail.get("content_html"):
+                    item["content_html"] = detail["content_html"]
+                if detail.get("images"):
+                    item["images"] = detail["images"]
+                if detail.get("videos"):
+                    item["videos"] = detail["videos"]
+                if detail.get("thumbnail") and not item.get("thumbnail"):
+                    item["thumbnail"] = detail["thumbnail"]
+                # 如果没有摘要但有正文，自动生成摘要
+                if not item.get("summary") and detail.get("content"):
+                    item["summary"] = self.extract_summary(detail["content"])
+            return item
+
+        results = list(items_skipped)  # 已跳过的保持原样
+
+        if items_to_fetch:
+            with ThreadPoolExecutor(max_workers=DETAIL_MAX_WORKERS) as pool:
+                futures = {pool.submit(_fetch_one, item): item for item in items_to_fetch}
+                for future in as_completed(futures):
+                    try:
+                        results.append(future.result())
+                    except Exception as e:
+                        self.logger.debug(f"[{self.name}] 详情页线程异常: {e}")
+                        results.append(futures[future])
+
+        # 保持原始排序（按 rank）
+        results.sort(key=lambda x: x.get("rank", 999))
+        return results
+
     # ========== 核心接口 ==========
 
     @abstractmethod
@@ -288,15 +392,52 @@ class BaseCrawler(ABC):
         pass
 
     def run(self) -> list[dict]:
-        """执行爬取，验证+截断为 TOP 10。异常向上抛出，由调用方重试。"""
+        """执行爬取，验证+截断为 TOP 10，然后抓取详情页。异常向上抛出。"""
         self.logger.info(f"[{self.name}] 开始爬取: {self.display_name}")
         results = self.crawl()
         # 验证数据有效性
         results = self.validate(results)
         # 强制截断为 TOP 10
         results = results[:TOP_N]
-        self.logger.info(f"[{self.name}] 爬取完成: {len(results)} 条 (TOP {TOP_N})")
+        self.logger.info(f"[{self.name}] 列表爬取完成: {len(results)} 条 (TOP {TOP_N})")
+
+        # 抓取详情页（正文/图片/视频）
+        if self.enable_detail and results:
+            self.logger.info(f"[{self.name}] 开始抓取详情页...")
+            results = self._fetch_all_details(results)
+            detail_ok = sum(1 for r in results if r.get("content"))
+            self.logger.info(f"[{self.name}] 详情页完成: {detail_ok}/{len(results)} 篇有正文")
+
+            # 下载图片到本地
+            self._download_images(results)
+
         return results
+
+    def _download_images(self, items: list):
+        """为所有新闻条目下载图片到本地"""
+        try:
+            from media_storage import download_images_for_news, download_thumbnail
+        except ImportError:
+            self.logger.debug(f"[{self.name}] media_storage 不可用，跳过图片下载")
+            return
+
+        total_downloaded = 0
+        for item in items:
+            # 下载正文图片
+            images = item.get("images", [])
+            if images:
+                item["images"] = download_images_for_news(images)
+                total_downloaded += sum(1 for img in item["images"] if img.get("local"))
+
+            # 下载缩略图
+            thumb = item.get("thumbnail", "")
+            if thumb and thumb.startswith("http"):
+                local_thumb = download_thumbnail(thumb)
+                if local_thumb:
+                    item["thumbnail_local"] = local_thumb
+
+        if total_downloaded:
+            self.logger.info(f"[{self.name}] 图片下载完成: {total_downloaded} 张")
 
 
 class RSSCrawler(BaseCrawler):

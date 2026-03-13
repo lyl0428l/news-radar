@@ -62,6 +62,16 @@ WEB_HOST = "127.0.0.1"
 WEB_PORT = 5000
 WEB_DEBUG = False
 
+# ============ 媒体配置 ============
+MEDIA_DIR = os.path.join(DATA_DIR, "media")
+MEDIA_IMAGE_DIR = os.path.join(MEDIA_DIR, "images")
+MEDIA_MAX_IMAGES = 20             # 每篇文章最多保存图片数
+MEDIA_MIN_IMAGE_SIZE = 100        # 最小图片尺寸（像素），过滤 logo/icon
+MEDIA_IMAGE_MAX_WIDTH = 1200      # 下载图片最大宽度，超过则压缩
+MEDIA_DOWNLOAD_TIMEOUT = 10       # 图片下载超时（秒）
+DETAIL_FETCH_TIMEOUT = 12         # 详情页抓取超时（秒）
+DETAIL_MAX_WORKERS = 5            # 详情页并发抓取线程数
+
 # ============ 数据保留 ============
 DATA_RETAIN_DAYS = 30             # JSON 文件保留天数
 

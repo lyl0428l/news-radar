@@ -9,7 +9,7 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-cd /d "%~dp0"
+cd /d "%~dp0news_crawler"
 
 echo ========================================
 echo   News Crawler Service - Reinstall
@@ -28,6 +28,7 @@ echo [3/6] Clearing cache...
 if exist __pycache__ rd /s /q __pycache__
 if exist web\__pycache__ rd /s /q web\__pycache__
 if exist crawlers\__pycache__ rd /s /q crawlers\__pycache__
+if exist utils\__pycache__ rd /s /q utils\__pycache__
 echo     Cache cleared
 
 echo [4/6] Installing service...

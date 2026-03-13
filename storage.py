@@ -101,13 +101,17 @@ def save_to_db(news_list: list) -> int:
                     continue  # 跳过无效数据
 
                 url_hash = make_url_hash(url)
+                # 序列化媒体字段
+                images_json = json.dumps(item.get("images", []), ensure_ascii=False)
+                videos_json = json.dumps(item.get("videos", []), ensure_ascii=False)
                 try:
                     cursor.execute("""
                         INSERT OR IGNORE INTO news
                         (url_hash, title, url, source, source_name, summary,
-                         content, category, rank, pub_time, crawl_time,
-                         language, extra_json)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         content, content_html, category, rank, pub_time,
+                         crawl_time, language, images, videos, thumbnail,
+                         extra_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         url_hash,
                         item.get("title", "").strip(),
@@ -116,11 +120,15 @@ def save_to_db(news_list: list) -> int:
                         item.get("source_name", ""),
                         item.get("summary", ""),
                         item.get("content", ""),
+                        item.get("content_html", ""),
                         item.get("category", ""),
                         item.get("rank", 0),
                         item.get("pub_time", ""),
                         item.get("crawl_time", ""),
                         item.get("language", "zh"),
+                        images_json,
+                        videos_json,
+                        item.get("thumbnail", ""),
                         json.dumps(item.get("extra", {}), ensure_ascii=False),
                     ))
                     if cursor.rowcount > 0:
@@ -265,7 +273,71 @@ def get_news(source=None, language=None, keyword=None,
         cursor.execute(query, params)
         rows = cursor.fetchall()
 
-        return [dict(row) for row in rows], total
+        results = [_deserialize_row(row) for row in rows]
+        return results, total
+    finally:
+        conn.close()
+
+
+def _deserialize_row(row) -> dict:
+    """将 SQLite Row 转为 dict，并反序列化 JSON 字段"""
+    item = dict(row)
+    for json_field in ("images", "videos"):
+        raw = item.get(json_field, "[]")
+        if isinstance(raw, str):
+            try:
+                item[json_field] = json.loads(raw) if raw else []
+            except (json.JSONDecodeError, TypeError):
+                item[json_field] = []
+    return item
+
+
+def check_urls_have_content(urls: list) -> set:
+    """
+    批量检查哪些 URL 在 DB 中已有正文内容（content 非空）。
+    返回已有内容的 URL 集合。用于优化：跳过详情页抓取。
+    """
+    if not urls:
+        return set()
+
+    conn = _get_connection(readonly=True)
+    try:
+        cursor = conn.cursor()
+        # 用 url_hash 查找
+        hashes = [(make_url_hash(u), u) for u in urls]
+        found = set()
+        # SQLite IN 参数上限 999，分批查
+        batch_size = 500
+        for i in range(0, len(hashes), batch_size):
+            batch = hashes[i:i + batch_size]
+            placeholders = ",".join(["?"] * len(batch))
+            hash_values = [h for h, _ in batch]
+            cursor.execute(f"""
+                SELECT url_hash FROM news
+                WHERE url_hash IN ({placeholders})
+                AND content IS NOT NULL AND content != ''
+                AND length(content) > 50
+            """, hash_values)
+            found_hashes = {row[0] for row in cursor.fetchall()}
+            for h, u in batch:
+                if h in found_hashes:
+                    found.add(u)
+        return found
+    finally:
+        conn.close()
+
+
+def get_news_by_id(news_id: int) -> dict:
+    """根据 ID 查询单条新闻（含媒体字段），用于详情页"""
+    conn = _get_connection(readonly=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM news WHERE id = ?", (news_id,))
+        row = cursor.fetchone()
+        if row is None:
+            return {}
+        return _deserialize_row(row)
     finally:
         conn.close()
 

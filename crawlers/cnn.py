@@ -6,6 +6,8 @@ from crawlers.base import RSSCrawler
 
 class CNNCrawler(RSSCrawler):
 
+    detail_selectors = [".article__content", ".zn-body__paragraph", ".l-container"]
+
     def __init__(self):
         super().__init__()
         self.name = "cnn"

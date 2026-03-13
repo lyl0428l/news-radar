@@ -6,6 +6,8 @@ from crawlers.base import BaseCrawler
 
 class SinaCrawler(BaseCrawler):
 
+    detail_selectors = [".article-body", "#artibody", ".article-content", ".main-content"]
+
     def __init__(self):
         super().__init__()
         self.name = "sina"

@@ -7,6 +7,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class SohuCrawler(BaseCrawler):
 
+    detail_selectors = [".article", "article.article", "#article-container", "#mp-editor"]
+
     def __init__(self):
         super().__init__()
         self.name = "sohu"

@@ -8,6 +8,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class PeopleCrawler(BaseCrawler):
 
+    detail_selectors = [".rm_txt_con", "#rwb_zw", ".article", ".text_con"]
+
     def __init__(self):
         super().__init__()
         self.name = "people"

@@ -7,6 +7,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class TencentCrawler(BaseCrawler):
 
+    detail_selectors = [".content-article", ".LEFT .content", "#ArticleContent", ".article-content"]
+
     def __init__(self):
         super().__init__()
         self.name = "tencent"

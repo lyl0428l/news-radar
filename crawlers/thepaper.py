@@ -6,6 +6,8 @@ from crawlers.base import BaseCrawler
 
 class ThePaperCrawler(BaseCrawler):
 
+    detail_selectors = [".news_txt", ".news_content", ".article-content", ".index_content"]
+
     def __init__(self):
         super().__init__()
         self.name = "thepaper"

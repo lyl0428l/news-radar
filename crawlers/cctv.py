@@ -8,6 +8,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class CCTVCrawler(BaseCrawler):
 
+    detail_selectors = [".content_area", "#content_area", ".cnt_bd", ".text_con"]
+
     def __init__(self):
         super().__init__()
         self.name = "cctv"

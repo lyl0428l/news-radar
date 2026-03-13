@@ -63,6 +63,12 @@ def init_db():
         _migrate_column(cursor, "news", "extra_json", "TEXT DEFAULT '{}'")
         _migrate_column(cursor, "news", "url_hash", "TEXT")
 
+        # ========== 媒体字段迁移（图片/视频/缩略图/正文HTML） ==========
+        _migrate_column(cursor, "news", "images", "TEXT DEFAULT '[]'")
+        _migrate_column(cursor, "news", "videos", "TEXT DEFAULT '[]'")
+        _migrate_column(cursor, "news", "thumbnail", "TEXT DEFAULT ''")
+        _migrate_column(cursor, "news", "content_html", "TEXT DEFAULT ''")
+
         # ========== 回填旧数据的 url_hash ==========
         _backfill_url_hash(cursor)
 

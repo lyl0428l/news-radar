@@ -8,6 +8,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class IfengCrawler(BaseCrawler):
 
+    detail_selectors = [".text_img", ".main_content-body", "#articleContent", ".yc_con_txt"]
+
     def __init__(self):
         super().__init__()
         self.name = "ifeng"

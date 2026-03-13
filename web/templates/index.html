@@ -111,6 +111,16 @@
         .btn-read { background: none; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 11px; color: var(--text-muted); cursor: pointer; transition: all 0.15s; }
         .btn-read:hover { background: var(--bg); border-color: var(--text-muted); }
 
+        /* ---- Thumbnail in card ---- */
+        .news-thumb {
+            width: 120px; height: 80px; border-radius: 6px; object-fit: cover; flex-shrink: 0;
+            background: #f0f2f5; box-shadow: var(--shadow-sm);
+        }
+        .media-indicators { display: inline-flex; gap: 8px; font-size: 11px; color: var(--text-muted); }
+        .media-indicators span { display: inline-flex; align-items: center; gap: 2px; }
+        .link-original { font-size: 11px; color: var(--primary); text-decoration: none; margin-left: auto; }
+        .link-original:hover { text-decoration: underline; }
+
         /* ---- Rank Badges: Gold / Silver / Bronze ---- */
         .rank-badge {
             display: inline-flex; align-items: center; justify-content: center;
@@ -254,8 +264,13 @@
                                     {% if item.rank %}
                                     <span class="rank-badge {% if item.rank == 1 %}rank-1{% elif item.rank == 2 %}rank-2{% elif item.rank == 3 %}rank-3{% endif %}">{{ item.rank }}</span>
                                     {% endif %}
+                                    {% if item.thumbnail or item.thumbnail_local %}
+                                    <img class="news-thumb"
+                                         src="{% if item.thumbnail_local %}/media/{{ item.thumbnail_local }}{% else %}{{ item.thumbnail }}{% endif %}"
+                                         alt="" loading="lazy" onerror="this.style.display='none'">
+                                    {% endif %}
                                     <div style="flex:1;min-width:0;">
-                                        <a class="title-link" href="{{ item.url }}" target="_blank" rel="noopener"
+                                        <a class="title-link" href="/news/{{ item.id }}"
                                            onclick="markRead({{ item.id }})">{{ item.title }}</a>
                                         {% if item.summary %}
                                         <div class="news-summary">{{ item.summary }}</div>
@@ -266,8 +281,15 @@
                                             <span>{{ item.category }}</span>
                                             {% endif %}
                                             <span>{{ item.crawl_time }}</span>
+                                            {% if item.images and item.images|length > 0 or item.videos and item.videos|length > 0 %}
+                                            <span class="media-indicators">
+                                                {% if item.images and item.images|length > 0 %}<span>&#128247; {{ item.images|length }}</span>{% endif %}
+                                                {% if item.videos and item.videos|length > 0 %}<span>&#127909; {{ item.videos|length }}</span>{% endif %}
+                                            </span>
+                                            {% endif %}
+                                            <a class="link-original" href="{{ item.url }}" target="_blank" rel="noopener">原文</a>
                                             {% if not item.is_read %}
-                                            <button class="btn-read" onclick="markRead({{ item.id }}); return false;">标记已读</button>
+                                            <button class="btn-read" onclick="markRead({{ item.id }}); return false;">已读</button>
                                             {% endif %}
                                         </div>
                                     </div>

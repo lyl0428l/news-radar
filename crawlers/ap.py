@@ -7,6 +7,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_EN
 
 class APCrawler(BaseCrawler):
 
+    detail_selectors = [".RichTextStoryBody", ".Article", "[data-key='article']", ".article-body"]
+
     def __init__(self):
         super().__init__()
         self.name = "ap"

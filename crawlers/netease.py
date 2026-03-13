@@ -7,6 +7,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class NeteaseCrawler(BaseCrawler):
 
+    detail_selectors = ["#content", ".post_body", ".post_text", ".article-body"]
+
     def __init__(self):
         super().__init__()
         self.name = "netease"

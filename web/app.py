@@ -13,8 +13,8 @@ import json
 import threading
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, Response
-from config import WEB_HOST, WEB_PORT, WEB_DEBUG, SITES
-from storage import get_news, get_stats, get_crawl_health, get_crawl_rounds, mark_read
+from config import WEB_HOST, WEB_PORT, WEB_DEBUG, SITES, MEDIA_DIR
+from storage import get_news, get_news_by_id, get_stats, get_crawl_health, get_crawl_rounds, mark_read
 from models import init_db
 
 app = Flask(__name__)
@@ -221,6 +221,33 @@ def health_page():
     """爬虫健康状态面板"""
     health = get_crawl_health()
     return render_template("health.html", health=health)
+
+
+# ============================================================
+#  新闻详情页
+# ============================================================
+
+@app.route("/news/<int:news_id>")
+def news_detail(news_id):
+    """新闻详情页 - 显示正文、图片、视频"""
+    item = get_news_by_id(news_id)
+    if not item:
+        return render_template("detail.html", item=None), 404
+    return render_template("detail.html", item=item)
+
+
+# ============================================================
+#  媒体文件路由（本地图片访问）
+# ============================================================
+
+@app.route("/media/<path:filename>")
+def serve_media(filename):
+    """提供本地媒体文件访问"""
+    from flask import send_from_directory, abort
+    # 安全检查：只允许访问 media 目录下的文件
+    if ".." in filename:
+        abort(403)
+    return send_from_directory(MEDIA_DIR, filename)
 
 
 @app.route("/api/export")

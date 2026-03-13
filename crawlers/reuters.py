@@ -8,6 +8,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_EN
 
 class ReutersCrawler(BaseCrawler):
 
+    detail_selectors = [".article-body__content", "[data-testid='article-body']", ".StandardArticleBody_body"]
+
     def __init__(self):
         super().__init__()
         self.name = "reuters"

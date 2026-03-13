@@ -7,6 +7,8 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class JiemianCrawler(BaseCrawler):
 
+    detail_selectors = [".article-content", ".article_content", ".article-main"]
+
     def __init__(self):
         super().__init__()
         self.name = "jiemian"
