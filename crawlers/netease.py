@@ -7,7 +7,9 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class NeteaseCrawler(BaseCrawler):
 
-    detail_selectors = ["#content", ".post_body", ".post_text", ".article-body"]
+    # .article-body 优先：网易移动端（m.163.com）使用此容器
+    # #content / .post_body / .post_text 为 PC 端回退
+    detail_selectors = [".article-body", ".post_body", ".post_text", "#content"]
 
     def __init__(self):
         super().__init__()

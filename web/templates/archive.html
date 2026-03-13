@@ -248,6 +248,7 @@
                                         {% endif %}
                                         <div class="news-meta">
                                             <span class="source {{ item.language }}">{{ item.source_name or item.source }}</span>
+                                            {% if item.author %}<span>{{ item.author }}</span>{% endif %}
                                             {% if item.category %}
                                             <span>{{ item.category }}</span>
                                             {% endif %}
@@ -268,15 +269,17 @@
                             </div>
                             {% endfor %}
 
+                            {% if total_pages > 1 %}
                             <div class="pagination">
                                 {% if current_page > 1 %}
-                                <a href="?source={{ current_source }}&language={{ current_language }}&keyword={{ current_keyword }}&start_time={{ current_start_time }}&end_time={{ current_end_time }}&crawl_round={{ current_crawl_round }}&page={{ current_page - 1 }}">上一页</a>
+                                <a href="?source={{ current_source|urlencode }}&language={{ current_language|urlencode }}&keyword={{ current_keyword|urlencode }}&start_time={{ current_start_time|urlencode }}&end_time={{ current_end_time|urlencode }}&crawl_round={{ current_crawl_round|urlencode }}&page={{ current_page - 1 }}">上一页</a>
                                 {% endif %}
                                 <a class="active">第 {{ current_page }} / {{ total_pages }} 页 (共 {{ total_count }} 条)</a>
                                 {% if current_page < total_pages %}
-                                <a href="?source={{ current_source }}&language={{ current_language }}&keyword={{ current_keyword }}&start_time={{ current_start_time }}&end_time={{ current_end_time }}&crawl_round={{ current_crawl_round }}&page={{ current_page + 1 }}">下一页</a>
+                                <a href="?source={{ current_source|urlencode }}&language={{ current_language|urlencode }}&keyword={{ current_keyword|urlencode }}&start_time={{ current_start_time|urlencode }}&end_time={{ current_end_time|urlencode }}&crawl_round={{ current_crawl_round|urlencode }}&page={{ current_page + 1 }}">下一页</a>
                                 {% endif %}
                             </div>
+                            {% endif %}
                         {% else %}
                             <div class="empty">暂无匹配的历史新闻，请调整筛选条件。</div>
                         {% endif %}
@@ -302,7 +305,7 @@
 
     <footer class="footer">
         <div class="container">
-            <span>新闻聚合平台 &middot; 15 个来源 &middot; 每小时自动爬取</span>
+            <span>新闻聚合平台 &middot; {{ site_count }} 个来源 &middot; 每小时自动爬取</span>
             <span>历史新闻归档</span>
         </div>
     </footer>
@@ -326,14 +329,14 @@
     })();
 
     function markRead(newsId) {
-        fetch('/api/mark_read/' + newsId, { method: 'POST' })
-            .then(function(resp) { return resp.json(); })
-            .then(function(data) {
-                if (data.ok) {
-                    var el = document.getElementById('news-' + newsId);
-                    if (el) el.classList.add('read');
-                }
-            });
+        // 使用 sendBeacon 确保导航时请求不被取消
+        if (navigator.sendBeacon) {
+            navigator.sendBeacon('/api/mark_read/' + newsId);
+        } else {
+            fetch('/api/mark_read/' + newsId, { method: 'POST', keepalive: true });
+        }
+        var el = document.getElementById('news-' + newsId);
+        if (el) el.classList.add('read');
     }
 
     function exportData(fmt) {

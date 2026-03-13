@@ -69,6 +69,9 @@ def init_db():
         _migrate_column(cursor, "news", "thumbnail", "TEXT DEFAULT ''")
         _migrate_column(cursor, "news", "content_html", "TEXT DEFAULT ''")
 
+        # ========== 作者/账号字段迁移 ==========
+        _migrate_column(cursor, "news", "author", "TEXT DEFAULT ''")
+
         # ========== 回填旧数据的 url_hash ==========
         _backfill_url_hash(cursor)
 

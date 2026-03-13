@@ -20,6 +20,11 @@ from models import init_db
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 
+# 全局模板变量：所有页面都可使用 {{ site_count }}
+@app.context_processor
+def inject_globals():
+    return {"site_count": len(SITES)}
+
 
 # ---------- 简易短时缓存（减少首页重复 DB 查询） ----------
 _cache: dict = {}
@@ -35,6 +40,53 @@ def _cached(key: str, fn, ttl: int = _CACHE_TTL):
     value = fn()
     _cache[key] = (now, value)
     return value
+
+
+def _enrich_thumbnails(news_list: list) -> list:
+    """
+    为列表中的每条新闻设置 thumbnail_local 字段。
+    逻辑：
+    1. 如果 thumbnail URL 能在 images 列表中找到对应的本地文件，使用它
+    2. 否则如果 images 列表中有任何已下载的本地图片，使用第一张作为缩略图
+    3. 否则保持原样（使用外部 thumbnail URL）
+    """
+    for item in news_list:
+        if item.get("thumbnail_local"):
+            continue  # 已有本地缩略图
+
+        images = item.get("images", [])
+        if not images or not isinstance(images, list):
+            continue
+
+        thumb_url = item.get("thumbnail", "")
+
+        # 策略 1：精确匹配 thumbnail URL → 对应本地路径
+        if thumb_url:
+            for img in images:
+                if not isinstance(img, dict):
+                    continue
+                orig_url = img.get("url", "")
+                local_path = img.get("local", "")
+                if local_path and orig_url:
+                    # 精确匹配或 protocol-relative 匹配
+                    if orig_url == thumb_url:
+                        item["thumbnail_local"] = local_path
+                        break
+                    if thumb_url.startswith("//") and orig_url.endswith(thumb_url[2:]):
+                        item["thumbnail_local"] = local_path
+                        break
+                    if orig_url.startswith("//") and thumb_url.endswith(orig_url[2:]):
+                        item["thumbnail_local"] = local_path
+                        break
+
+        # 策略 2：没有精确匹配，使用第一张有本地文件的图片
+        if not item.get("thumbnail_local"):
+            for img in images:
+                if isinstance(img, dict) and img.get("local"):
+                    item["thumbnail_local"] = img["local"]
+                    break
+
+    return news_list
 
 
 # ============================================================
@@ -65,6 +117,7 @@ def index():
         limit=per_page,
         offset=(page - 1) * per_page,
     )
+    news_list = _enrich_thumbnails(news_list)
 
     total_pages = (total + per_page - 1) // per_page if total > 0 else 1
     stats = _cached("stats", get_stats)
@@ -117,6 +170,9 @@ def archive():
     per_page = 50
 
     # datetime-local 提交格式 "2026-03-11T14:00" → "2026-03-11 14:00"
+    # 保留原始值（含 T）给模板回显，转换后的值给 DB 查询
+    start_time_display = start_time  # 给 datetime-local 回显用
+    end_time_display = end_time
     if start_time and "T" in start_time:
         start_time = start_time.replace("T", " ")
     if end_time and "T" in end_time:
@@ -138,6 +194,7 @@ def archive():
         limit=per_page,
         offset=(page - 1) * per_page,
     )
+    news_list = _enrich_thumbnails(news_list)
 
     total_pages = (total + per_page - 1) // per_page if total > 0 else 1
     stats = _cached("stats", get_stats)
@@ -153,8 +210,8 @@ def archive():
         current_source=source,
         current_language=language,
         current_keyword=keyword,
-        current_start_time=start_time,
-        current_end_time=end_time,
+        current_start_time=start_time_display,
+        current_end_time=end_time_display,
         current_crawl_round=crawl_round,
         current_page=page,
         total_pages=total_pages,
@@ -233,7 +290,90 @@ def news_detail(news_id):
     item = get_news_by_id(news_id)
     if not item:
         return render_template("detail.html", item=None), 404
+
+    # 自动标记为已读（查看详情即表示已读）
+    if not item.get("is_read"):
+        try:
+            mark_read(news_id)
+            item["is_read"] = 1
+        except Exception:
+            pass
+
+    # 将 content_html 中的外部图片 URL 替换为本地 /media/ 路径
+    item = _rewrite_content_images(item)
+
     return render_template("detail.html", item=item)
+
+
+def _rewrite_content_images(item: dict) -> dict:
+    """
+    将 content_html 中的 <img> src 替换为本地已下载的图片路径。
+    同时修复 protocol-relative URL (//xxx → https://xxx)。
+
+    逻辑：
+    1. 从 images JSON 字段构建 {原始URL → /media/本地路径} 的映射表
+    2. 扫描 content_html 中所有 <img> 的 src 属性，匹配则替换为本地路径
+    3. 不匹配的外部 URL 补全 https: 前缀
+    """
+    import re
+
+    content_html = item.get("content_html", "")
+    images = item.get("images", [])
+    if not content_html or not images:
+        # 即使没有 images 映射，也修复 <img> 中的 protocol-relative URLs
+        if content_html:
+            item["content_html"] = re.sub(
+                r'(<img\b[^>]*\bsrc=["\'])//([^"\']+)',
+                r'\1https://\2',
+                content_html,
+                flags=re.IGNORECASE,
+            )
+        return item
+
+    # 1. 构建 URL → 本地路径 的映射
+    url_to_local = {}
+    for img in images:
+        if not isinstance(img, dict):
+            continue
+        orig_url = img.get("url", "")
+        local_path = img.get("local", "")
+        if orig_url and local_path:
+            url_to_local[orig_url] = f"/media/{local_path}"
+            # 也添加 protocol-relative 变体
+            if orig_url.startswith("https://"):
+                url_to_local["//" + orig_url[8:]] = f"/media/{local_path}"
+            elif orig_url.startswith("http://"):
+                url_to_local["//" + orig_url[7:]] = f"/media/{local_path}"
+
+    # 2. 替换 content_html 中的 img src
+    def _replace_img_src(match):
+        quote_prefix = match.group(1)  # src=" 或 src='
+        src_url = match.group(2)       # URL
+        quote_end = match.group(3)     # " 或 '
+
+        # 精确匹配
+        if src_url in url_to_local:
+            return f'{quote_prefix}{url_to_local[src_url]}{quote_end}'
+
+        # 补全 protocol-relative 后再匹配
+        if src_url.startswith("//"):
+            full_url = "https:" + src_url
+            if full_url in url_to_local:
+                return f'{quote_prefix}{url_to_local[full_url]}{quote_end}'
+            # 没匹配到本地，至少补全 https:
+            return f'{quote_prefix}https:{src_url}{quote_end}'
+
+        return match.group(0)
+
+    # 只匹配 <img 标签的 src 属性，避免误改 <script>/<iframe>/<video> 的 src
+    item["content_html"] = re.sub(
+        r'(<img\b[^>]*\bsrc=["\'])([^"\']+)(["\'])',
+        _replace_img_src,
+        content_html,
+        flags=re.IGNORECASE,
+    )
+
+    return item
 
 
 # ============================================================

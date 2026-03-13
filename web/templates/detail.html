@@ -25,6 +25,8 @@
             --tag-zh-text: #c2410c;
             --tag-en-bg: #eff6ff;
             --tag-en-text: #1d4ed8;
+            --code-bg: #f8fafc;
+            --blockquote-border: #4361ee;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -58,39 +60,96 @@
             box-shadow: var(--shadow-md);
         }
 
-        /* Title */
+        /* Title - Markdown H1 style */
         .article-title {
-            font-size: 26px; font-weight: 700; line-height: 1.5; color: var(--text);
-            margin-bottom: 16px;
+            font-size: 28px; font-weight: 700; line-height: 1.4; color: var(--text);
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid var(--border);
         }
 
-        /* Meta info */
-        .article-meta {
-            display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-            padding-bottom: 20px; margin-bottom: 24px;
-            border-bottom: 1px solid var(--border);
-            font-size: 13px; color: var(--text-muted);
+        /* ---- Metadata Block (Markdown-style) ---- */
+        .meta-block {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 28px;
+            font-size: 14px;
+            line-height: 2;
+            font-family: "SFMono-Regular", Consolas, "Microsoft YaHei", monospace;
         }
-        .article-meta .source {
-            padding: 3px 12px; border-radius: 4px; font-weight: 500; font-size: 12px;
+        .meta-block .meta-row {
+            display: flex;
+            gap: 8px;
         }
-        .article-meta .source.zh { background: var(--tag-zh-bg); color: var(--tag-zh-text); }
-        .article-meta .source.en { background: var(--tag-en-bg); color: var(--tag-en-text); }
-        .article-meta .sep { color: var(--border); }
-        .article-meta a { color: var(--primary); text-decoration: none; margin-left: auto; }
-        .article-meta a:hover { text-decoration: underline; }
+        .meta-block .meta-label {
+            color: var(--text-muted);
+            min-width: 80px;
+            flex-shrink: 0;
+            user-select: none;
+        }
+        .meta-block .meta-value {
+            color: var(--text);
+            word-break: break-all;
+        }
+        .meta-block .meta-value a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+        .meta-block .meta-value a:hover {
+            text-decoration: underline;
+        }
+        .meta-block .tag {
+            display: inline-block;
+            padding: 1px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .meta-block .tag.zh { background: var(--tag-zh-bg); color: var(--tag-zh-text); }
+        .meta-block .tag.en { background: var(--tag-en-bg); color: var(--tag-en-text); }
 
-        /* Content body */
+        /* ---- Content body (Markdown-style) ---- */
         .article-body {
             font-size: 16px; line-height: 2; color: #333;
         }
         .article-body p {
-            margin-bottom: 18px; text-indent: 0;
+            margin-bottom: 18px;
         }
         .article-body img {
             max-width: 100%; height: auto; border-radius: 8px;
-            margin: 16px 0; display: block;
+            margin: 20px 0; display: block;
             box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        }
+        .article-body h2, .article-body h3 {
+            margin: 24px 0 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        .article-body blockquote {
+            border-left: 4px solid var(--blockquote-border);
+            padding: 12px 20px;
+            margin: 16px 0;
+            background: var(--primary-light);
+            border-radius: 0 8px 8px 0;
+            color: var(--text-secondary);
+        }
+        .article-body a {
+            color: var(--primary);
+            text-decoration: underline;
+        }
+        .article-body pre, .article-body code {
+            background: var(--code-bg);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: monospace;
+        }
+        .article-body video {
+            max-width: 100%; border-radius: 8px;
+            margin: 20px 0; display: block;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            background: #000;
         }
 
         /* Summary fallback */
@@ -100,30 +159,57 @@
             border-left: 4px solid var(--primary); margin-bottom: 24px;
         }
 
+        /* ---- Section Headers (Markdown H2 style) ---- */
+        .section-header {
+            font-size: 18px;
+            font-weight: 700;
+            margin: 32px 0 16px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--border);
+            color: var(--text);
+        }
+
         /* ---- Images Gallery ---- */
-        .media-section {
-            margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border);
+        .image-gallery {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-bottom: 24px;
         }
-        .media-section h3 {
-            font-size: 16px; font-weight: 700; margin-bottom: 16px; color: var(--text);
+        .image-item {
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+            background: #fafafa;
         }
-        .image-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 12px;
+        .image-item img {
+            width: 100%;
+            max-height: 600px;
+            object-fit: contain;
+            display: block;
+            cursor: pointer;
+            background: #f5f5f5;
         }
-        .image-grid-item {
-            border-radius: 8px; overflow: hidden; cursor: pointer;
-            box-shadow: var(--shadow-sm); transition: transform 0.2s, box-shadow 0.2s;
-            position: relative;
+        .image-item .img-caption {
+            font-size: 13px;
+            color: var(--text-secondary);
+            padding: 10px 16px;
+            border-top: 1px solid var(--border);
+            background: white;
         }
-        .image-grid-item:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
-        .image-grid-item img {
-            width: 100%; height: 160px; object-fit: cover; display: block;
+        .image-item .img-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            padding: 0 16px 10px;
+            background: white;
+            word-break: break-all;
         }
-        .image-grid-item .caption {
-            font-size: 12px; color: var(--text-secondary); padding: 6px 10px;
-            background: var(--card); line-height: 1.4;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        .image-item .img-meta a {
+            color: var(--text-muted);
+            text-decoration: none;
+        }
+        .image-item .img-meta a:hover {
+            color: var(--primary);
         }
 
         /* ---- Videos ---- */
@@ -137,16 +223,31 @@
         .video-item iframe {
             width: 100%; height: 450px; border: none; display: block;
         }
+        .video-link {
+            display: block;
+            padding: 12px 16px;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 12px;
+            font-size: 13px;
+            word-break: break-all;
+        }
+        .video-link a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+        .video-link a:hover { text-decoration: underline; }
 
         /* ---- Lightbox ---- */
         .lightbox {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); z-index: 9999;
+            background: rgba(0,0,0,0.88); z-index: 9999;
             justify-content: center; align-items: center; cursor: pointer;
         }
         .lightbox.active { display: flex; }
         .lightbox img {
-            max-width: 90%; max-height: 90%; border-radius: 8px;
+            max-width: 92%; max-height: 92%; border-radius: 8px;
             box-shadow: 0 8px 40px rgba(0,0,0,0.5);
         }
         .lightbox .close-btn {
@@ -177,12 +278,22 @@
         }
         .back-link:hover { background: var(--primary-light); }
 
+        /* ---- No-content hint ---- */
+        .no-content-hint {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+        .no-content-hint a { color: var(--primary); }
+
         /* ---- Responsive ---- */
         @media (max-width: 768px) {
-            .article-card { padding: 24px 20px; }
+            .article-card { padding: 24px 16px; }
             .article-title { font-size: 20px; }
             .article-body { font-size: 15px; }
-            .image-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+            .meta-block { padding: 12px 14px; font-size: 13px; }
+            .meta-block .meta-label { min-width: 60px; }
             .video-item iframe { height: 250px; }
             .header .container { flex-direction: column; gap: 12px; }
             .footer .container { flex-direction: column; gap: 8px; text-align: center; }
@@ -216,37 +327,62 @@
         <a href="javascript:history.back()" class="back-link">&larr; 返回列表</a>
 
         <div class="article-card">
-            <!-- Title -->
+
+            <!-- ===================== Title ===================== -->
             <h1 class="article-title">{{ item.title }}</h1>
 
-            <!-- Meta -->
-            <div class="article-meta">
-                <span class="source {{ item.language or 'zh' }}">{{ item.source_name or item.source }}</span>
-                {% if item.category %}<span>{{ item.category }}</span><span class="sep">|</span>{% endif %}
-                {% if item.pub_time %}<span>发布: {{ item.pub_time }}</span><span class="sep">|</span>{% endif %}
-                <span>采集: {{ item.crawl_time }}</span>
-                <a href="{{ item.url }}" target="_blank" rel="noopener">查看原文 &rarr;</a>
+            <!-- ===================== Metadata Block ===================== -->
+            <div class="meta-block">
+                <div class="meta-row">
+                    <span class="meta-label">来源</span>
+                    <span class="meta-value">
+                        <span class="tag {{ item.language or 'zh' }}">{{ item.source_name or item.source }}</span>
+                        {% if item.category %} / {{ item.category }}{% endif %}
+                    </span>
+                </div>
+                {% if item.author %}
+                <div class="meta-row">
+                    <span class="meta-label">作者</span>
+                    <span class="meta-value">{{ item.author }}</span>
+                </div>
+                {% endif %}
+                {% if item.pub_time %}
+                <div class="meta-row">
+                    <span class="meta-label">发布时间</span>
+                    <span class="meta-value">{{ item.pub_time }}</span>
+                </div>
+                {% endif %}
+                <div class="meta-row">
+                    <span class="meta-label">采集时间</span>
+                    <span class="meta-value">{{ item.crawl_time }}</span>
+                </div>
+                <div class="meta-row">
+                    <span class="meta-label">原文链接</span>
+                    <span class="meta-value"><a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.url }}</a></span>
+                </div>
             </div>
 
-            <!-- Videos (show before content if available) -->
-            {% if item.videos %}
-            <div class="media-section" style="border-top: none; margin-top: 0; padding-top: 0; margin-bottom: 24px;">
-                {% for video in item.videos %}
-                <div class="video-item">
-                    {% if video.type == 'iframe' %}
-                        <iframe src="{{ video.url }}" allowfullscreen loading="lazy"></iframe>
-                    {% else %}
-                        <video controls preload="metadata" {% if video.poster %}poster="{{ video.poster }}"{% endif %}>
-                            <source src="{{ video.url }}" type="video/mp4">
-                            您的浏览器不支持视频播放
-                        </video>
-                    {% endif %}
-                </div>
-                {% endfor %}
+            <!-- ===================== Videos ===================== -->
+            {% if item.videos and item.videos|length > 0 %}
+            <div class="section-header">视频 ({{ item.videos|length }})</div>
+            {% for video in item.videos %}
+            <div class="video-item">
+                {% if video.type == 'iframe' %}
+                    <iframe src="{{ video.url }}" allowfullscreen loading="lazy"></iframe>
+                {% else %}
+                    <video controls preload="metadata" {% if video.poster %}poster="{{ video.poster }}"{% endif %}>
+                        <source src="{{ video.url }}" type="video/mp4">
+                        您的浏览器不支持视频播放
+                    </video>
+                {% endif %}
             </div>
+            <div class="video-link">视频地址: <a href="{{ video.url }}" target="_blank">{{ video.url }}</a></div>
+            {% endfor %}
             {% endif %}
 
-            <!-- Content -->
+            <!-- ===================== Article Content ===================== -->
+            <div class="section-header">正文内容</div>
+
             {% if item.content_html and item.content_html|length > 100 %}
                 <div class="article-body">{{ item.content_html|safe }}</div>
             {% elif item.content and item.content|length > 50 %}
@@ -265,39 +401,46 @@
                     </p>
                 </div>
             {% else %}
-                <div class="article-summary">
-                    <p>暂无正文内容。</p>
-                    <p style="margin-top:12px; font-size:13px; color:var(--text-muted);">
-                        <a href="{{ item.url }}" target="_blank">点击查看原文 &rarr;</a>
-                    </p>
+                <div class="no-content-hint">
+                    <p>暂无正文内容</p>
+                    <p><a href="{{ item.url }}" target="_blank">点击查看原文 &rarr;</a></p>
                 </div>
             {% endif %}
 
-            <!-- Images Gallery -->
+            <!-- ===================== Images Gallery ===================== -->
             {% if item.images and item.images|length > 0 %}
-            <div class="media-section">
-                <h3>相关图片 ({{ item.images|length }})</h3>
-                <div class="image-grid">
-                    {% for img in item.images %}
-                    <div class="image-grid-item" onclick="openLightbox('{% if img.local %}/media/{{ img.local }}{% else %}{{ img.url }}{% endif %}')">
-                        <img src="{% if img.local %}/media/{{ img.local }}{% else %}{{ img.url }}{% endif %}"
-                             alt="{{ img.caption or '' }}" loading="lazy"
-                             onerror="this.parentElement.style.display='none'">
-                        {% if img.caption %}
-                        <div class="caption">{{ img.caption }}</div>
+            <div class="section-header">图片 ({{ item.images|length }})</div>
+            <div class="image-gallery">
+                {% for img in item.images %}
+                <div class="image-item">
+                    <img src="{% if img.local %}/media/{{ img.local }}{% else %}{{ img.url }}{% endif %}"
+                         alt="{{ img.caption or '' }}" loading="lazy"
+                         onclick="openLightbox(this.src)"
+                         onerror="this.parentElement.style.display='none'">
+                    {% if img.caption %}
+                    <div class="img-caption">{{ img.caption }}</div>
+                    {% endif %}
+                    <div class="img-meta">
+                        {% if img.local %}
+                            本地: /media/{{ img.local }}
+                            {% if img.url %}| {% endif %}
+                        {% endif %}
+                        {% if img.url %}
+                            原始: <a href="{{ img.url }}" target="_blank">{{ img.url[:100] }}{% if img.url|length > 100 %}...{% endif %}</a>
                         {% endif %}
                     </div>
-                    {% endfor %}
                 </div>
+                {% endfor %}
             </div>
             {% endif %}
+
         </div>
     </div>
 </div>
 
 <!-- Lightbox -->
-<div class="lightbox" id="lightbox" onclick="closeLightbox()">
-    <button class="close-btn" onclick="closeLightbox()">&times;</button>
+<div class="lightbox" id="lightbox" onclick="if(event.target===this)closeLightbox()">
+    <button class="close-btn" onclick="closeLightbox();event.stopPropagation()">&times;</button>
     <img id="lightbox-img" src="" alt="">
 </div>
 
@@ -316,8 +459,8 @@
 <!-- Footer -->
 <div class="footer">
     <div class="container">
-        <span>新闻聚合爬虫平台 v2.0</span>
-        <span>15 个新闻源 &bull; 每小时自动更新</span>
+        <span>新闻聚合爬虫平台 v2.1</span>
+        <span>{{ site_count }} 个新闻源 &bull; 每小时自动更新 &bull; Markdown 风格呈现</span>
     </div>
 </div>
 

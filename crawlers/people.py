@@ -8,7 +8,9 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class PeopleCrawler(BaseCrawler):
 
-    detail_selectors = [".rm_txt_con", "#rwb_zw", ".article", ".text_con"]
+    # .rm_txt_con 是人民网文章正文容器（含 bza 分享区 + 正文段落）
+    # .col-1 是更大的列容器，作为二级回退
+    detail_selectors = [".rm_txt_con", "#rwb_zw", ".text_con", ".col-1", ".article"]
 
     def __init__(self):
         super().__init__()

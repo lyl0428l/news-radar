@@ -110,8 +110,8 @@ def save_to_db(news_list: list) -> int:
                         (url_hash, title, url, source, source_name, summary,
                          content, content_html, category, rank, pub_time,
                          crawl_time, language, images, videos, thumbnail,
-                         extra_json)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         author, extra_json)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         url_hash,
                         item.get("title", "").strip(),
@@ -129,10 +129,48 @@ def save_to_db(news_list: list) -> int:
                         images_json,
                         videos_json,
                         item.get("thumbnail", ""),
+                        item.get("author", ""),
                         json.dumps(item.get("extra", {}), ensure_ascii=False),
                     ))
                     if cursor.rowcount > 0:
                         inserted += 1
+                    else:
+                        # INSERT OR IGNORE 跳过了 → URL 已存在
+                        # 如果新数据有 content 而旧记录没有，则更新（回填正文）
+                        new_content = item.get("content", "")
+                        new_content_html = item.get("content_html", "")
+                        new_summary = item.get("summary", "")
+                        new_thumbnail = item.get("thumbnail", "")
+                        new_author = item.get("author", "")
+                        new_pub_time = item.get("pub_time", "")
+                        # 有新内容、图片、视频、作者、时间等任意新数据时都应回填
+                        new_images = item.get("images", [])
+                        new_videos = item.get("videos", [])
+                        has_new_data = (
+                            (new_content and len(new_content) > 50) or
+                            new_author or new_pub_time or
+                            new_images or new_videos
+                        )
+                        if has_new_data:
+                            cursor.execute("""
+                                UPDATE news SET
+                                    content = CASE WHEN (content IS NULL OR content = '' OR length(content) < 50) THEN ? ELSE content END,
+                                    content_html = CASE WHEN (content_html IS NULL OR content_html = '') THEN ? ELSE content_html END,
+                                    summary = CASE WHEN (summary IS NULL OR summary = '') THEN ? ELSE summary END,
+                                    images = CASE WHEN (images IS NULL OR images = '' OR images = '[]') THEN ? ELSE images END,
+                                    videos = CASE WHEN (videos IS NULL OR videos = '' OR videos = '[]') THEN ? ELSE videos END,
+                                    thumbnail = CASE WHEN (thumbnail IS NULL OR thumbnail = '') THEN ? ELSE thumbnail END,
+                                    author = CASE WHEN (author IS NULL OR author = '') THEN ? ELSE author END,
+                                    pub_time = CASE WHEN (pub_time IS NULL OR pub_time = '') THEN ? ELSE pub_time END,
+                                    rank = ?
+                                WHERE url_hash = ?
+                            """, (
+                                new_content, new_content_html, new_summary,
+                                images_json, videos_json, new_thumbnail,
+                                new_author, new_pub_time,
+                                item.get("rank", 0),
+                                url_hash,
+                            ))
                 except sqlite3.IntegrityError:
                     # UNIQUE 冲突（去重），正常跳过
                     pass
@@ -294,8 +332,9 @@ def _deserialize_row(row) -> dict:
 
 def check_urls_have_content(urls: list) -> set:
     """
-    批量检查哪些 URL 在 DB 中已有正文内容（content 非空）。
-    返回已有内容的 URL 集合。用于优化：跳过详情页抓取。
+    批量检查哪些 URL 在 DB 中已完整抓取（正文 + 图片 + 作者都有）。
+    返回已完整抓取的 URL 集合。用于优化：跳过详情页抓取。
+    只有正文、图片、作者全部都有的才跳过，否则需要重新抓取补全。
     """
     if not urls:
         return set()
@@ -317,6 +356,8 @@ def check_urls_have_content(urls: list) -> set:
                 WHERE url_hash IN ({placeholders})
                 AND content IS NOT NULL AND content != ''
                 AND length(content) > 50
+                AND images IS NOT NULL AND images != '' AND images != '[]'
+                AND author IS NOT NULL AND author != ''
             """, hash_values)
             found_hashes = {row[0] for row in cursor.fetchall()}
             for h, u in batch:

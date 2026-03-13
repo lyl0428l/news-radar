@@ -45,6 +45,7 @@ class NewsItem:
     images: list = field(default_factory=list)
     videos: list = field(default_factory=list)
     thumbnail: str = ""
+    author: str = ""
     extra: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -64,6 +65,7 @@ class NewsItem:
             "images": self.images,
             "videos": self.videos,
             "thumbnail": self.thumbnail,
+            "author": self.author,
             "extra": self.extra,
         }
 
@@ -149,6 +151,7 @@ class BaseCrawler(ABC):
                    pub_time: str = "", content: str = "",
                    content_html: str = "", images: Optional[list] = None,
                    videos: Optional[list] = None, thumbnail: str = "",
+                   author: str = "",
                    extra: Optional[dict] = None) -> dict:
         """构造标准新闻条目，rank 为热榜排名（1=最热）"""
         return {
@@ -167,6 +170,7 @@ class BaseCrawler(ABC):
             "images": images or [],
             "videos": videos or [],
             "thumbnail": thumbnail.strip() if thumbnail else "",
+            "author": author.strip() if author else "",
             "extra": extra or {},
         }
 
@@ -359,6 +363,13 @@ class BaseCrawler(ABC):
                     item["videos"] = detail["videos"]
                 if detail.get("thumbnail") and not item.get("thumbnail"):
                     item["thumbnail"] = detail["thumbnail"]
+                if detail.get("author") and not item.get("author"):
+                    item["author"] = detail["author"]
+                if detail.get("pub_time") and not item.get("pub_time"):
+                    # 用 base.py 的 parse_time 统一格式化
+                    parsed = self.parse_time(detail["pub_time"])
+                    if parsed:
+                        item["pub_time"] = parsed
                 # 如果没有摘要但有正文，自动生成摘要
                 if not item.get("summary") and detail.get("content"):
                     item["summary"] = self.extract_summary(detail["content"])
