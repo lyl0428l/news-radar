@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新闻爬虫完整时序图 - 白话版</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif;
+            background: #f0f4f8;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { 
+            color: #2d3748; 
+            text-align: center; 
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+        .subtitle {
+            color: #718096;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .mermaid {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            margin-bottom: 30px;
+            overflow-x: auto;
+        }
+        
+        .explanation {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        .explanation h2 {
+            color: #2d3748;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+        
+        .step {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #f7fafc;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
+        }
+        .step-number {
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+        .step-content { flex: 1; }
+        .step-title {
+            font-weight: bold;
+            color: #2d3748;
+            margin-bottom: 5px;
+        }
+        .step-desc {
+            color: #4a5568;
+            line-height: 1.6;
+        }
+        .step-code {
+            background: #edf2f7;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #667eea;
+        }
+        
+        .actors {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .actor {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+        }
+        .actor-name {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 5px;
+        }
+        .actor-desc {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        
+        .btn-group {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 8px;
+            margin: 0 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .btn:hover { 
+            background: #5a6fd6; 
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🕷️ 新闻爬虫系统工作流程</h1>
+        <p class="subtitle">用大白话告诉你，这个系统是怎么自动抓新闻的</p>
+
+        <!-- 时序图 -->
+        <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant 定时器 as ⏰ 定时器<br/>（每小时叫一次）
+    participant 总指挥 as 🎯 总指挥<br/>（main.py）
+    participant 快递员 as 🕷️ 快递员<br/>（爬虫）
+    participant 新闻网站 as 🌐 新闻网站<br/>（新浪/腾讯等）
+    participant 图片库 as 🖼️ 图片库<br/>（media_storage）
+    participant 仓库 as 💾 仓库<br/>（storage）
+    participant 数据库 as 🗄️ 数据库<br/>（SQLite）
+    participant 客服 as 📢 客服<br/>（notify）
+    participant 微信 as 💬 微信<br/>（PushPlus）
+
+    Note over 定时器,微信: ===== 第一步：叫醒服务 =====
+    定时器->>定时器: 等了1小时，该干活了
+    定时器->>总指挥: 起床！去抓新闻
+
+    Note over 总指挥,微信: ===== 第二步：分派任务 =====
+    总指挥->>总指挥: 看看要抓哪些网站
+    总指挥->>总指挥: 召集8个快递员准备
+    
+    loop 每个网站（共10个）
+        总指挥->>快递员: 去这个网站抓TOP10
+        activate 快递员
+        快递员->>快递员: 准备好工具
+        快递员->>新闻网站: 我要看看你家新闻
+        新闻网站-->>快递员: 给你网页内容
+        快递员->>快递员: 解析出标题和链接
+        快递员->>快递员: 检查数据对不对
+        快递员->>快递员: 只留前10条
+        快递员-->>总指挥: 抓到了！
+        deactivate 快递员
+    end
+
+    Note over 快递员,微信: ===== 第三步：深入抓取 =====
+    loop 每条新闻（每站10条）
+        总指挥->>快递员: 去看看这篇新闻全文
+        快递员->>新闻网站: 我要看这篇的详细内容
+        新闻网站-->>快递员: 给你完整页面
+        快递员->>快递员: 提取正文、图片、视频
+        快递员->>图片库: 把图片下载下来
+        图片库->>新闻网站: 给我这张图片
+        新闻网站-->>图片库: 图片数据
+        图片库->>图片库: 压缩保存到本地
+        图片库-->>快递员: 图片存好了
+    end
+
+    Note over 总指挥,微信: ===== 第四步：入库保存 =====
+    总指挥->>仓库: 把所有新闻存起来
+    仓库->>仓库: 统一网址格式
+    仓库->>仓库: 生成唯一编号
+    仓库->>数据库: 存进去（重复的跳过）
+    数据库-->>仓库: 新增了50条
+    仓库-->>总指挥: 存好了
+    
+    总指挥->>仓库: 再备份一份JSON
+    仓库->>仓库: 写入文件
+    仓库-->>总指挥: 备份完成
+
+    Note over 总指挥,微信: ===== 第五步：通知用户 =====
+    总指挥->>客服: 有没有重大新闻？
+    loop 命中关键词的
+        客服->>客服: 组装完整内容
+        客服->>微信: 发送重大新闻
+        微信-->>客服: 发送成功
+    end
+    
+    总指挥->>客服: 发个汇总给用户
+    客服->>客服: 按网站分组整理
+    客服->>微信: 发送汇总
+    微信-->>客服: 发送成功
+
+    Note over 定时器,微信: ===== 完成！等下一小时 =====
+    总指挥-->>定时器: 搞定了
+        </div>
+
+        <!-- 白话解释 -->
+        <div class="explanation">
+            <h2>📖 白话解释每个步骤</h2>
+            
+            <div class="step">
+                <div class="step-number">1</div>
+                <div class="step-content">
+                    <div class="step-title">⏰ 定时器叫醒服务</div>
+                    <div class="step-desc">
+                        系统里有个"闹钟"，<strong>每1小时响一次</strong>。闹钟响了就叫醒总指挥去干活。
+                        <br>代码位置：<span class="step-code">scheduler.py</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">2</div>
+                <div class="step-content">
+                    <div class="step-title">🎯 总指挥分派任务</div>
+                    <div class="step-desc">
+                        总指挥先看看要抓哪些网站（新浪、腾讯、网易等共10个），然后<strong>召集8个快递员</strong>同时出发，一人负责一个网站。
+                        <br>代码位置：<span class="step-code">main.py</span> 的 <span class="step-code">ThreadPoolExecutor</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">3</div>
+                <div class="step-content">
+                    <div class="step-title">🕷️ 快递员抓取列表</div>
+                    <div class="step-desc">
+                        每个快递员去一个网站，<strong>像浏览器一样访问网页</strong>，把新闻标题和链接抓回来。只保留<strong>前10条</strong>（TOP 10）。
+                        <br>代码位置：<span class="step-code">crawlers/base.py</span> 的 <span class="step-code">run()</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">4</div>
+                <div class="step-content">
+                    <div class="step-title">📄 深入抓取详情</div>
+                    <div class="step-desc">
+                        光有标题不够，还要<strong>看完整文章</strong>。快递员点进每条新闻，抓取正文、图片、视频。图片还会<strong>下载到本地</strong>保存。
+                        <br>代码位置：<span class="step-code">crawlers/base.py</span> 的 <span class="step-code">fetch_detail()</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">5</div>
+                <div class="step-content">
+                    <div class="step-title">💾 入库保存</div>
+                    <div class="step-desc">
+                        抓回来的新闻<strong>存进数据库</strong>，同时<strong>备份成JSON文件</strong>。如果新闻已经存在（链接相同），就<strong>跳过不重复存</strong>。
+                        <br>代码位置：<span class="step-code">storage.py</span> 的 <span class="step-code">save_to_db()</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">6</div>
+                <div class="step-content">
+                    <div class="step-title">📱 通知用户</div>
+                    <div class="step-desc">
+                        如果有<strong>重大新闻</strong>（标题含"地震"、"战争"等关键词），立即<strong>推送到微信</strong>。最后发一个<strong>汇总</strong>，告诉你这轮抓了多少条。
+                        <br>代码位置：<span class="step-code">utils/notify.py</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 参与者说明 -->
+        <div class="explanation">
+            <h2>👥 每个"角色"是谁？</h2>
+            <div class="actors">
+                <div class="actor">
+                    <div class="actor-name">⏰ 定时器</div>
+                    <div class="actor-desc">就是 scheduler.py，每小时叫一次</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">🎯 总指挥</div>
+                    <div class="actor-desc">就是 main.py，协调所有人干活</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">🕷️ 快递员</div>
+                    <div class="actor-desc">就是 crawlers/*.py，实际去网站抓数据</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">🌐 新闻网站</div>
+                    <div class="actor-desc">新浪、腾讯、网易等，被抓的对象</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">🖼️ 图片库</div>
+                    <div class="actor-desc">就是 media_storage.py，负责下载图片</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">💾 仓库</div>
+                    <div class="actor-desc">就是 storage.py，负责存数据</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">🗄️ 数据库</div>
+                    <div class="actor-desc">SQLite，实际存储数据的地方</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">📢 客服</div>
+                    <div class="actor-desc">就是 utils/notify.py，负责发通知</div>
+                </div>
+                <div class="actor">
+                    <div class="actor-name">💬 微信</div>
+                    <div class="actor-desc">PushPlus 服务，把消息推送到微信</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="btn-group">
+            <button class="btn" onclick="copyCode()">📋 复制代码</button>
+            <button class="btn" onclick="downloadSVG()">📥 下载 SVG</button>
+            <button class="btn" onclick="downloadPNG()">🖼️ 下载 PNG</button>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            sequence: { 
+                showSequenceNumbers: true,
+                actorMargin: 50,
+                messageMargin: 40
+            }
+        });
+
+        function copyCode() {
+            const code = document.querySelector('.mermaid').textContent.trim();
+            navigator.clipboard.writeText(code).then(() => {
+                alert('代码已复制到剪贴板！');
+            });
+        }
+
+        function downloadSVG() {
+            const svg = document.querySelector('.mermaid svg');
+            if (svg) {
+                const svgData = new XMLSerializer().serializeToString(svg);
+                const blob = new Blob([svgData], {type: 'image/svg+xml'});
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = '新闻爬虫时序图-白话版.svg';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+        }
+
+        function downloadPNG() {
+            const svg = document.querySelector('.mermaid svg');
+            if (svg) {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const svgData = new XMLSerializer().serializeToString(svg);
+                const img = new Image();
+                
+                img.onload = function() {
+                    canvas.width = img.width * 2;
+                    canvas.height = img.height * 2;
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    
+                    const a = document.createElement('a');
+                    a.href = canvas.toDataURL('image/png');
+                    a.download = '新闻爬虫时序图-白话版.png';
+                    a.click();
+                };
+                
+                img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+            }
+        }
+    </script>
+</body>
+</html>

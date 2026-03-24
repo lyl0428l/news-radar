@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>爬虫状态 - 新闻聚合平台</title>
+    <style>
+        :root {
+            --primary: #4361ee;
+            --primary-dark: #3a56d4;
+            --primary-light: #eef1ff;
+            --header-from: #1a1a2e;
+            --header-via: #16213e;
+            --header-to: #0f3460;
+            --bg: #f0f2f5;
+            --card: #ffffff;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --border: #e2e8f0;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+            --radius: 10px;
+            --green: #22c55e;
+            --green-bg: #dcfce7;
+            --green-text: #166534;
+            --yellow: #eab308;
+            --yellow-bg: #fef9c3;
+            --yellow-text: #854d0e;
+            --red: #ef4444;
+            --red-bg: #fee2e2;
+            --red-text: #991b1b;
+            --blue-bg: #dbeafe;
+            --blue-text: #1e40af;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+        .header { background: linear-gradient(135deg, var(--header-from), var(--header-via), var(--header-to)); color: #fff; padding: 22px 0 0; }
+        .header .container { display: flex; justify-content: space-between; align-items: flex-start; }
+        .header h1 { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+        .header h1 a { color: #fff; text-decoration: none; }
+        .nav-wrap { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.08); }
+        .nav-links { display: flex; gap: 0; }
+        .nav-links a {
+            color: rgba(255,255,255,0.55); text-decoration: none; font-size: 14px; font-weight: 500;
+            padding: 12px 20px; position: relative; transition: color 0.2s;
+        }
+        .nav-links a:hover { color: rgba(255,255,255,0.9); }
+        .nav-links a.active { color: #fff; }
+        .nav-links a.active::after {
+            content: ''; position: absolute; bottom: 0; left: 20px; right: 20px;
+            height: 3px; background: var(--primary); border-radius: 3px 3px 0 0;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+        /* ---- Summary Bar ---- */
+        .summary-bar { padding: 24px 0 0; }
+        .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+        .summary-card {
+            background: var(--card); border-radius: var(--radius); padding: 20px;
+            box-shadow: var(--shadow-sm); text-align: center;
+        }
+        .summary-card .number { font-size: 32px; font-weight: 800; line-height: 1.2; }
+        .summary-card .label { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+        .summary-card.healthy .number { color: var(--green); }
+        .summary-card.warning .number { color: var(--yellow); }
+        .summary-card.critical .number { color: var(--red); }
+        .summary-card.total .number { color: var(--primary); }
+
+        /* ---- Section Title ---- */
+        .section-title {
+            font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 16px;
+            padding-bottom: 12px; border-bottom: 2px solid var(--primary);
+        }
+
+        /* ---- Health Grid ---- */
+        .content { padding: 0 0 40px; }
+        .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+
+        .health-card {
+            background: var(--card); border-radius: var(--radius); padding: 20px;
+            box-shadow: var(--shadow-sm); border-left: 4px solid var(--border);
+            transition: box-shadow 0.2s, transform 0.2s;
+        }
+        .health-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+        .health-card.healthy { border-left-color: var(--green); }
+        .health-card.warning { border-left-color: var(--yellow); }
+        .health-card.critical { border-left-color: var(--red); }
+
+        /* Card Header */
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .card-header h3 { font-size: 15px; font-weight: 700; color: var(--text); }
+        .level-tag {
+            padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .level-tag.healthy { background: var(--green-bg); color: var(--green-text); }
+        .level-tag.warning { background: var(--yellow-bg); color: var(--yellow-text); }
+        .level-tag.critical { background: var(--red-bg); color: var(--red-text); }
+
+        /* Stats Row */
+        .card-stats { display: flex; gap: 16px; margin-bottom: 14px; font-size: 12px; color: var(--text-secondary); }
+        .card-stats .stat { display: flex; flex-direction: column; align-items: center; }
+        .card-stats .stat-value { font-size: 18px; font-weight: 700; color: var(--text); }
+        .card-stats .stat-label { color: var(--text-muted); margin-top: 2px; }
+
+        /* Success Rate Bar */
+        .rate-bar-wrap { margin-bottom: 14px; }
+        .rate-bar-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
+        .rate-bar { height: 6px; background: #e9ecef; border-radius: 3px; overflow: hidden; }
+        .rate-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
+        .rate-bar-fill.high { background: linear-gradient(90deg, var(--green), #16a34a); }
+        .rate-bar-fill.medium { background: linear-gradient(90deg, var(--yellow), #ca8a04); }
+        .rate-bar-fill.low { background: linear-gradient(90deg, var(--red), #dc2626); }
+
+        /* Heatmap Blocks */
+        .heatmap { display: flex; gap: 4px; margin-bottom: 14px; }
+        .heatmap-block {
+            width: 32px; height: 32px; border-radius: 6px; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; font-size: 9px; font-weight: 600;
+            transition: transform 0.15s; cursor: default; position: relative;
+        }
+        .heatmap-block:hover { transform: scale(1.1); }
+        .heatmap-block.success { background: var(--green-bg); color: var(--green-text); }
+        .heatmap-block.failed { background: var(--red-bg); color: var(--red-text); }
+        .heatmap-block.empty { background: var(--yellow-bg); color: var(--yellow-text); }
+        .heatmap-block.running { background: var(--blue-bg); color: var(--blue-text); }
+        .heatmap-block .block-count { font-size: 13px; font-weight: 800; line-height: 1; }
+        .heatmap-block .block-label { font-size: 8px; opacity: 0.8; }
+
+        /* History Detail */
+        .history { font-size: 12px; color: var(--text-secondary); }
+        .history-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 6px 0; border-bottom: 1px solid #f1f5f9;
+        }
+        .history-item:last-child { border-bottom: none; }
+        .history-time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+        .history-count { font-weight: 600; color: var(--text); min-width: 40px; text-align: right; }
+        .status-tag {
+            padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;
+            letter-spacing: 0.3px; text-transform: uppercase;
+        }
+        .status-tag.success { background: var(--green-bg); color: var(--green-text); }
+        .status-tag.failed { background: var(--red-bg); color: var(--red-text); }
+        .status-tag.empty { background: var(--yellow-bg); color: var(--yellow-text); }
+        .status-tag.running { background: var(--blue-bg); color: var(--blue-text); }
+
+        .no-records { color: var(--text-muted); padding: 10px 0; font-size: 12px; }
+
+        .empty-state { text-align: center; padding: 80px 20px; color: var(--text-muted); font-size: 16px; }
+
+        /* Footer */
+        .footer { background: var(--card); border-top: 1px solid var(--border); padding: 20px 0; margin-top: 20px; }
+        .footer .container { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); }
+        .footer a { color: var(--text-secondary); text-decoration: none; }
+        .footer a:hover { color: var(--primary); }
+
+        @media (max-width: 768px) {
+            .health-grid { grid-template-columns: 1fr; }
+            .summary-cards { grid-template-columns: repeat(2, 1fr); }
+            .header .container { flex-direction: column; gap: 12px; }
+            .footer .container { flex-direction: column; gap: 8px; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <div>
+                <h1><a href="/">新闻聚合平台</a></h1>
+            </div>
+        </div>
+        <div class="nav-wrap">
+            <div class="container">
+                <div class="nav-links">
+                    <a href="/">最新新闻</a>
+                    <a href="/archive">历史新闻</a>
+                    <a href="/health" class="active">爬虫状态</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="content">
+        <div class="container">
+            {% if health %}
+            <!-- Summary Cards -->
+            <div class="summary-bar">
+                {% set ns = namespace(healthy=0, warning=0, critical=0) %}
+                {% for item in health %}
+                    {% if item.level == 'healthy' %}{% set ns.healthy = ns.healthy + 1 %}
+                    {% elif item.level == 'warning' %}{% set ns.warning = ns.warning + 1 %}
+                    {% elif item.level == 'critical' %}{% set ns.critical = ns.critical + 1 %}
+                    {% endif %}
+                {% endfor %}
+                <div class="summary-cards">
+                    <div class="summary-card total">
+                        <div class="number">{{ health|length }}</div>
+                        <div class="label">爬虫总数</div>
+                    </div>
+                    <div class="summary-card healthy">
+                        <div class="number">{{ ns.healthy }}</div>
+                        <div class="label">运行正常</div>
+                    </div>
+                    <div class="summary-card warning">
+                        <div class="number">{{ ns.warning }}</div>
+                        <div class="label">有告警</div>
+                    </div>
+                    <div class="summary-card critical">
+                        <div class="number">{{ ns.critical }}</div>
+                        <div class="label">严重异常</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-title">各来源详情</div>
+
+            <div class="health-grid">
+                {% for item in health %}
+                {% set total_runs = item.recent|length %}
+                {% set success_runs = item.recent|selectattr('status', 'equalto', 'success')|list|length %}
+                {% set success_rate = (success_runs * 100 / total_runs)|round|int if total_runs > 0 else 0 %}
+                <div class="health-card {{ item.level }}">
+                    <!-- Header -->
+                    <div class="card-header">
+                        <h3>{{ item.source_name or item.source }}</h3>
+                        <span class="level-tag {{ item.level }}">
+                            {% if item.level == 'healthy' %}正常
+                            {% elif item.level == 'warning' %}告警
+                            {% else %}异常{% endif %}
+                        </span>
+                    </div>
+
+                    <!-- Stats -->
+                    <div class="card-stats">
+                        <div class="stat">
+                            <span class="stat-value">{{ success_rate }}%</span>
+                            <span class="stat-label">成功率</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value">{{ total_runs }}</span>
+                            <span class="stat-label">近期轮次</span>
+                        </div>
+                        {% if item.recent %}
+                        <div class="stat">
+                            <span class="stat-value">{{ item.recent[0].count }}</span>
+                            <span class="stat-label">最新条数</span>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Success Rate Bar -->
+                    <div class="rate-bar-wrap">
+                        <div class="rate-bar-label">
+                            <span>成功率</span>
+                            <span>{{ success_rate }}%</span>
+                        </div>
+                        <div class="rate-bar">
+                            <div class="rate-bar-fill {% if success_rate >= 80 %}high{% elif success_rate >= 50 %}medium{% else %}low{% endif %}"
+                                 style="width: {{ success_rate }}%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Heatmap Blocks -->
+                    <div class="heatmap">
+                        {% for r in item.recent %}
+                        <div class="heatmap-block {{ r.status }}" title="{{ r.time }} | {{ r.count }} 条 | {{ r.status }}">
+                            <span class="block-count">{{ r.count }}</span>
+                            <span class="block-label">{{ r.status[:3] }}</span>
+                        </div>
+                        {% endfor %}
+                        {% if not item.recent %}
+                        <span class="no-records">暂无记录</span>
+                        {% endif %}
+                    </div>
+
+                    <!-- History Detail -->
+                    <div class="history">
+                        {% for r in item.recent %}
+                        <div class="history-item">
+                            <span class="history-time">{{ r.time }}</span>
+                            <span class="history-count">{{ r.count }} 条</span>
+                            <span class="status-tag {{ r.status }}">{{ r.status }}</span>
+                        </div>
+                        {% endfor %}
+                        {% if not item.recent %}
+                        <div class="no-records">暂无爬取记录</div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">暂无爬取日志数据，请先运行一次爬虫。</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <span>新闻聚合平台 &middot; {{ site_count }} 个来源 &middot; 每小时自动爬取</span>
+            <span>爬虫健康监控</span>
+        </div>
+    </footer>
+</body>
+</html>

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新闻爬虫时序图 - 学习版</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { 
+            color: white; 
+            text-align: center; 
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        .card h2 {
+            color: #333;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+        .step-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        .description {
+            color: #666;
+            margin: 15px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            overflow-x: auto;
+            padding: 20px 0;
+        }
+        .nav {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        }
+        .nav a {
+            display: block;
+            color: #667eea;
+            text-decoration: none;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .nav a:hover { color: #764ba2; }
+        .nav a:last-child { border-bottom: none; }
+        .legend {
+            background: #f0f0f0;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .legend h4 { margin-bottom: 10px; }
+        .legend-item { margin: 5px 0; }
+        code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 新闻爬虫时序图 - 学习版</h1>
+
+        <!-- 导航 -->
+        <div class="nav">
+            <strong>快速导航</strong>
+            <a href="#step1">第1步：基础</a>
+            <a href="#step2">第2步：添加爬虫</a>
+            <a href="#step3">第3步：添加并发</a>
+            <a href="#step4">第4步：详情页</a>
+            <a href="#step5">第5步：图片下载</a>
+            <a href="#step6">第6步：数据存储</a>
+            <a href="#step7">第7步：完整版</a>
+        </div>
+
+        <!-- 第1步 -->
+        <div class="card" id="step1">
+            <h2><span class="step-badge">第1步</span>最简单的版本（2个参与者）</h2>
+            <div class="description">
+                <strong>学习目标：</strong>掌握基本语法<br>
+                <code>participant</code> 定义参与者，<code>->></code> 调用，<code>-->> </code> 返回
+            </div>
+            <div class="mermaid">
+sequenceDiagram
+    participant S as 调度器
+    participant M as 主程序
+    
+    S->>M: 每小时触发爬取
+    M-->>S: 爬取完成
+            </div>
+            <div class="legend">
+                <h4>📝 代码解释</h4>
+                <div class="legend-item">• <code>participant S as 调度器</code> - 定义第一个参与者</div>
+                <div class="legend-item">• <code>S->>M: 消息</code> - 实线箭头表示"调用"</div>
+                <div class="legend-item">• <code>M-->>S: 消息</code> - 虚线箭头表示"返回"</div>
+            </div>
+        </div>
+
+        <!-- 第2步 -->
+        <div class="card" id="step2">
+            <h2><span class="step-badge">第2步</span>添加爬虫（3个参与者）</h2>
+            <div class="description">
+                <strong>学习目标：</strong>添加多个参与者<br>
+                爬虫需要访问网站获取数据
+            </div>
+            <div class="mermaid">
+sequenceDiagram
+    participant S as 调度器
+    participant M as 主程序
+    participant C as 爬虫
+    
+    S->>M: 1. 触发爬取
+    M->>C: 2. 爬取新浪
+    C-->>M: 3. 返回10条新闻
+    M->>C: 4. 爬取腾讯
+    C-->>M: 5. 返回10条新闻
+    M-->>S: 6. 爬取完成
+            </div>
+            <div class="legend">
+                <h4>📝 代码解释</h4>
+                <div class="legend-item">• 新增 <code>C as 爬虫</code> 参与者</div>
+                <div class="legend-item">• 主程序调用爬虫两次（新浪、腾讯）</div>
+                <div class="legend-item">• 每次调用返回10条新闻</div>
+            </div>
+        </div>
+
+        <!-- 第3步 -->
+        <div class="card" id="step3">
+            <h2><span class="step-badge">第3步</span>添加并发（用循环表示多个站点）</h2>
+            <div class="description">
+                <strong>学习目标：</strong>使用 <code>loop</code> 循环<br>
+                实际有10个站点，用循环简化表示
+            </div>
+            <div class="mermaid">
+sequenceDiagram
+    participant S as 调度器
+    participant M as 主程序
+    participant C as 爬虫
+    
+    S->>M: 1. 触发爬取
+    
+    loop 每个站点（10个）
+        M->>C: 2. 爬取站点
+        C-->>M: 3. 返回10条新闻
+    end
+    
+    M-->>S: 4. 爬取完成
+            </div>
+            <div class="legend">
+                <h4>📝 代码解释</h4>
+                <div class="legend-item">• <code>loop 循环条件</code> - 开始循环</div>
+                <div class="legend-item">• <code>end</code> - 结束循环</div>
+                <div class="legend-item">• 循环内的操作会重复执行10次</div>
+            </div>
+        </div>
+
+        <!-- 第4步 -->
+        <div class="card" id="step4">
+            <h2><span class="step-badge">第4步</span>添加详情页抓取</h2>
+            <div class="description">
+                <strong>学习目标：</strong>添加外部系统（网站）<br>
+                爬虫需要访问网站获取HTML，然后解析
+            </div>
+            <div class="mermaid">
+sequenceDiagram
+    participant S as 调度器
+    participant M as 主程序
+    participant C as 爬虫
+    participant W as 网站
+    
+    S->>M: 1. 触发爬取
+    
+    loop 每个站点（10个）
+        M->>C: 2. 爬取列表页
+        C->>W: 3. HTTP请求
+        W-->>C: 4. 返回HTML
+        C-->>M: 5. 返回10条新闻标题
+        
+        loop 每条新闻（10条）
+            M->>C: 6. 抓取详情页
+            C->>W: 7. HTTP请求详情
+            W-->>C: 8. 返回详情HTML
+            C-->>M: 9. 返回正文/图片
+        end
+    end
+    
+    M-->>S: 10. 爬取完成
+            </div>
+            <div class="legend">
+                <h4>📝 代码解释</h4>
+                <div class="legend-item">• 新增 <code>W as 网站</code> 外部系统</div>
+                <div class="legend-item">• 嵌套循环：外层10个站点，内层10条新闻</div>
+                <div class="legend-item">• HTTP请求：爬虫请求网站，网站返回HTML</div>
+            </div>
+        </div>
+
+        <!-- 第5步 -->
+        <div class="card" id="step5">
+            <h2><span class="step-badge">第5步</span>添加图片下载</h2>
+            <div class="description">
+                <strong>学习目标：</strong>添加媒体存储模块<br>
+                图片需要下载到本地保存
+            </div>
+            <div class="mermaid">
+sequenceDiagram
+    participant S as 调度器
+    participant M as 主程序
+    participant C as 爬虫
+    participant W as 网站
+    participant MS as 媒体存储
+    
+    S->>M: 1. 触发爬取
+    
+    loop 每个站点（10个）
+        M->>C: 2. 爬取列表页
+        C->>W: 3. HTTP请求
+        W-->>C: 4. 返回HTML
+        C-->>M: 5. 返回10条新闻
+        
+        loop 每条新闻（10条）
+            M->>C: 6. 抓取详情页
+            C->>W: 7. HTTP请求详情
+            W-->>C: 8. 返回详情HTML
+            C-->>M: 9. 返回正文/图片URL
+            
+            loop 每张图片（最多20张）
+                M->>MS: 10. 下载图片
+                MS->>W: 11. HTTP请求图片
+                W-->>MS: 12. 返回图片数据
+                MS-->>M: 13. 返回本地路径
+            end
+        end
+    end
+    
+    M-->>S: 14. 爬取完成
+            </div>
+            <div class="legend">
+                <h4>📝 代码解释</h4>
+                <div class="legend-item">• 新增 <code>MS as 媒体存储</code> 模块</div>
+                <div class="legend-item">• 三层嵌套循环：站点 → 新闻 → 图片</div>
+                <div class="legend-item">• 媒体存储负责下载图片并保存到本地</div>
+            </div>
+        </div>
+
+        <!-- 第6步 -->
+        <div class="card" id="step6">
+            <h2><span class="step-badge">第6步</span>添加数据存储</h2>
+            <div class="description">
+                <strong>学习目标：</strong>添加数据库存储<br>
+                爬取的数据需要保存到数据库和JSON文件
+            </div>
+            <div class="mermaid">
+sequenceDiagram
+    participant S as 调度器
+    participant M as 主程序
+    participant C as 爬虫
+    participant W as 网站
+    participant MS as 媒体存储
+    participant ST as 存储
+    participant DB as 数据库
+    
+    S->>M: 1. 触发爬取
+    
+    loop 每个站点（10个）
+        M->>C: 2. 爬取列表页
+        C->>W: 3. HTTP请求
+        W-->>C: 4. 返回HTML
+        C-->>M: 5. 返回10条新闻
+        
+        loop 每条新闻（10条）
+            M->>C: 6. 抓取详情页
+            C->>W: 7. HTTP请求详情
+            W-->>C: 8. 返回详情HTML
+            C-->>M: 9. 返回正文/图片URL
+            
+            loop 每张图片（最多20张）
+                M->>MS: 10. 下载图片
+                MS->>W: 11. HTTP请求图片
+                W-->>MS: 12. 返回图片数据
+                MS-->>M: 13. 返回本地路径
+            end
+        end
+    end
+    
+    M->>ST: 14. 保存到数据库
+    ST->>DB: 15. INSERT OR IGNORE
+    DB-->>ST: 16. 返回新增条数
+    ST-->>M: 17. 保存完成
+    
+    M->>ST: 18. 保存JSON文件
+    ST-->>M: 19. 返回文件路径
+    
+    M-->>S: 20. 爬取完成
+            </div>
+            <div class="legend">
+                <h4>📝 代码解释</h4>
+                <div class="legend-item">• 新增 <code>ST as 存储</code> 和 <code>DB as 数据库</code></div>
+                <div class="legend-item">• <code>INSERT OR IGNORE</code> - 去重写入数据库</div>
+                <div class="legend-item">• 存储层负责保存数据并返回结果</div>
+            </div>
+        </div>
+
+        <!-- 第7步 -->
+        <div class="card" id="step7">
+            <h2><span class="step-badge">第7步</span>添加微信推送（完整版）</h2>
+            <div class="description">
+                <strong>学习目标：</strong>完整流程<br>
+                爬取完成后推送通知给用户
+            </div>
+            <div class="mermaid">
+sequenceDiagram
+    participant S as 调度器
+    participant M as 主程序
+    participant C as 爬虫
+    participant W as 网站
+    participant MS as 媒体存储
+    participant ST as 存储
+    participant DB as 数据库
+    participant N as 通知
+    participant WX as 微信
+    
+    S->>M: 1. 触发爬取
+    
+    loop 每个站点（10个）
+        M->>C: 2. 爬取列表页
+        C->>W: 3. HTTP请求
+        W-->>C: 4. 返回HTML
+        C-->>M: 5. 返回10条新闻
+        
+        loop 每条新闻（10条）
+            M->>C: 6. 抓取详情页
+            C->>W: 7. HTTP请求详情
+            W-->>C: 8. 返回详情HTML
+            C-->>M: 9. 返回正文/图片URL
+            
+            loop 每张图片（最多20张）
+                M->>MS: 10. 下载图片
+                MS->>W: 11. HTTP请求图片
+                W-->>MS: 12. 返回图片数据
+                MS-->>M: 13. 返回本地路径
+            end
+        end
+    end
+    
+    M->>ST: 14. 保存到数据库
+    ST->>DB: 15. INSERT OR IGNORE
+    DB-->>ST: 16. 返回新增条数
+    ST-->>M: 17. 保存完成
+    
+    M->>ST: 18. 保存JSON文件
+    ST-->>M: 19. 返回文件路径
+    
+    M->>N: 20. 检查重大新闻
+    N->>WX: 21. 推送重大新闻
+    WX-->>N: 22. 推送成功
+    
+    M->>N: 23. 发送汇总
+    N->>WX: 24. 推送汇总
+    WX-->>N: 25. 推送成功
+    
+    M-->>S: 26. 爬取完成
+            </div>
+            <div class="legend">
+                <h4>📝 完整流程总结</h4>
+                <div class="legend-item">• 新增 <code>N as 通知</code> 和 <code>WX as 微信</code></div>
+                <div class="legend-item">• 9个参与者协作完成整个爬取流程</div>
+                <div class="legend-item">• 最后推送重大新闻和汇总给用户</div>
+            </div>
+        </div>
+
+        <!-- 流程总结 -->
+        <div class="card">
+            <h2>🎯 完整流程总结</h2>
+            <div class="mermaid">
+graph LR
+    A[调度器触发] --> B[主程序协调]
+    B --> C[10个爬虫并发]
+    C --> D[爬取列表页]
+    D --> E[抓取详情页]
+    E --> F[下载图片]
+    F --> G[保存数据库]
+    G --> H[保存JSON]
+    H --> I[微信推送]
+    I --> J[等待下一轮]
+            </div>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            sequence: { 
+                showSequenceNumbers: true,
+                actorMargin: 50,
+                messageMargin: 40
+            }
+        });
+    </script>
+</body>
+</html>

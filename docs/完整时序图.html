@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新闻爬虫完整时序图</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; }
+        body { background: #f5f5f5; padding: 20px; }
+        .mermaid { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant SCH as SCH 调度器
+    participant MAIN as MAIN 主程序
+    participant CRAWLER as CRAWLER 爬虫
+    participant WEB_SITE as WEB_SITE 目标网站
+    participant MEDIA as MEDIA 媒体存储
+    participant STORAGE as STORAGE 数据存储
+    participant DB as DB 数据库
+    participant NOTIFY as NOTIFY 通知
+    participant WECHAT as WECHAT 微信
+
+    Note over SCH,WECHAT: ===== 定时触发 =====
+    SCH->>SCH: 每隔1小时检查一次
+    SCH->>MAIN: 喂，该干活了！
+
+    Note over MAIN,WECHAT: ===== 开始抓取 =====
+    MAIN->>MAIN: 看看要抓哪些网站
+    MAIN->>MAIN: 找8个人同时干
+    
+    loop 每个网站（10个）
+        MAIN->>CRAWLER: 你去这个网站抓新闻
+        CRAWLER->>WEB_SITE: 我要看新闻列表
+        WEB_SITE-->>CRAWLER: 给你网页内容
+        CRAWLER->>CRAWLER: 看看哪些是新闻
+        CRAWLER->>CRAWLER: 不对的删掉
+        CRAWLER->>CRAWLER: 只要前10条
+        CRAWLER-->>MAIN: 抓完了，给你
+    end
+
+    Note over CRAWLER,WECHAT: ===== 看详细内容 =====
+    loop 每条新闻（10条/站）
+        MAIN->>CRAWLER: 去看看这篇文章全文
+        CRAWLER->>WEB_SITE: 我要看文章详情
+        WEB_SITE-->>CRAWLER: 给你完整页面
+        CRAWLER->>CRAWLER: 把正文、图片、视频挑出来
+        CRAWLER->>MEDIA: 把图片下载下来
+        MEDIA->>WEB_SITE: 给我这张图片
+        WEB_SITE-->>MEDIA: 图片数据
+        MEDIA->>MEDIA: 压缩一下存到本地
+        MEDIA-->>CRAWLER: 图片存好了
+    end
+
+    Note over MAIN,WECHAT: ===== 存起来 =====
+    MAIN->>STORAGE: 把新闻都存起来
+    STORAGE->>STORAGE: 网址格式统一一下
+    STORAGE->>STORAGE: 算个唯一编号
+    STORAGE->>DB: 存进去（重复的跳过）
+    DB-->>STORAGE: 新存了50条
+    STORAGE-->>MAIN: 存好了
+    MAIN->>STORAGE: 再备份一份文件
+    STORAGE->>STORAGE: 写成JSON文件
+    STORAGE-->>MAIN: 备份完了
+
+    Note over MAIN,WECHAT: ===== 通知用户 =====
+    MAIN->>NOTIFY: 有重大新闻吗？
+    loop 标题里有关键词的
+        NOTIFY->>NOTIFY: 把完整内容组装好
+        NOTIFY->>WECHAT: 发重大新闻推送
+        WECHAT-->>NOTIFY: 发送成功
+    end
+    MAIN->>NOTIFY: 发个汇总给用户
+    NOTIFY->>NOTIFY: 按网站分组整理
+    NOTIFY->>WECHAT: 发汇总推送
+    WECHAT-->>NOTIFY: 发送成功
+
+    Note over SCH,WECHAT: ===== 搞定 =====
+    MAIN-->>SCH: 这轮干完了
+    </div>
+
+    <script>
+        mermaid.initialize({ 
+            startOnLoad: true,
+            theme: 'default',
+            sequence: { showSequenceNumbers: true }
+        });
+    </script>
+</body>
+</html>

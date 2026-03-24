@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新闻聚合平台</title>
+    <style>
+        :root {
+            --primary: #4361ee;
+            --primary-dark: #3a56d4;
+            --primary-light: #eef1ff;
+            --header-from: #1a1a2e;
+            --header-via: #16213e;
+            --header-to: #0f3460;
+            --bg: #f0f2f5;
+            --card: #ffffff;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --border: #e2e8f0;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+            --radius: 10px;
+            --rank-gold: linear-gradient(135deg, #f59e0b, #d97706);
+            --rank-silver: linear-gradient(135deg, #94a3b8, #64748b);
+            --rank-bronze: linear-gradient(135deg, #cd7c2f, #b45309);
+            --tag-zh-bg: #fff7ed;
+            --tag-zh-text: #c2410c;
+            --tag-en-bg: #eff6ff;
+            --tag-en-text: #1d4ed8;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+        /* ---- Header ---- */
+        .header { background: linear-gradient(135deg, var(--header-from), var(--header-via), var(--header-to)); color: #fff; padding: 22px 0 0; }
+        .header .container { display: flex; justify-content: space-between; align-items: flex-start; }
+        .header h1 { font-size: 22px; font-weight: 700; letter-spacing: 0.5px; }
+        .header h1 a { color: #fff; text-decoration: none; }
+        .stats-bar { display: flex; gap: 10px; font-size: 12px; color: rgba(255,255,255,0.6); flex-wrap: wrap; }
+        .stats-bar span { background: rgba(255,255,255,0.08); padding: 4px 12px; border-radius: 20px; backdrop-filter: blur(4px); }
+
+        /* Nav with bottom indicator */
+        .nav-wrap { margin-top: 18px; border-top: 1px solid rgba(255,255,255,0.08); }
+        .nav-links { display: flex; gap: 0; }
+        .nav-links a {
+            color: rgba(255,255,255,0.55); text-decoration: none; font-size: 14px; font-weight: 500;
+            padding: 12px 20px; position: relative; transition: color 0.2s;
+        }
+        .nav-links a:hover { color: rgba(255,255,255,0.9); }
+        .nav-links a.active { color: #fff; }
+        .nav-links a.active::after {
+            content: ''; position: absolute; bottom: 0; left: 20px; right: 20px;
+            height: 3px; background: var(--primary); border-radius: 3px 3px 0 0;
+        }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+        /* ---- Filter Bar ---- */
+        .filters {
+            background: var(--card); padding: 14px 0; position: sticky; top: 0; z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .filter-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .filter-form select, .filter-form input[type="text"] {
+            padding: 8px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px;
+            background: var(--card); color: var(--text); transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .filter-form select:focus, .filter-form input:focus {
+            outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(67,97,238,0.12);
+        }
+        .filter-form input[type="text"] { flex: 1; min-width: 180px; }
+        .btn-primary { padding: 8px 22px; background: var(--primary); color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.2s, box-shadow 0.2s; }
+        .btn-primary:hover { background: var(--primary-dark); box-shadow: 0 2px 8px rgba(67,97,238,0.3); }
+        .btn-outline { padding: 8px 16px; background: transparent; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 8px; text-decoration: none; font-size: 13px; display: inline-block; transition: all 0.2s; }
+        .btn-outline:hover { border-color: var(--text-secondary); color: var(--text); }
+
+        /* ---- Content ---- */
+        .content { padding: 24px 0 40px; }
+        .layout { display: grid; grid-template-columns: 1fr 280px; gap: 24px; }
+
+        /* ---- Section Title ---- */
+        .section-title {
+            font-size: 17px; font-weight: 700; color: var(--text); margin-bottom: 16px;
+            padding-bottom: 12px; border-bottom: 2px solid var(--primary);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .section-title .hint { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+        .section-title .hint a { color: var(--primary); text-decoration: none; }
+        .section-title .hint a:hover { text-decoration: underline; }
+
+        /* ---- News Cards ---- */
+        .news-list { display: flex; flex-direction: column; gap: 12px; }
+        .news-item {
+            background: var(--card); padding: 16px 20px; border-radius: var(--radius);
+            border-left: 3px solid transparent; transition: all 0.2s;
+            box-shadow: var(--shadow-sm);
+        }
+        .news-item:hover { border-left-color: var(--primary); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+        .news-item.read { opacity: 0.55; }
+        .news-item a.title-link { text-decoration: none; color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.6; transition: color 0.15s; }
+        .news-item a.title-link:hover { color: var(--primary); }
+        .news-item.read a.title-link { color: var(--text-muted); }
+        .news-summary { font-size: 13px; color: var(--text-secondary); margin-top: 6px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .news-meta { display: flex; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--text-muted); align-items: center; flex-wrap: wrap; }
+        .news-meta .source { padding: 2px 10px; border-radius: 4px; font-weight: 500; font-size: 11px; }
+        .news-meta .source.zh { background: var(--tag-zh-bg); color: var(--tag-zh-text); }
+        .news-meta .source.en { background: var(--tag-en-bg); color: var(--tag-en-text); }
+        .btn-read { background: none; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; font-size: 11px; color: var(--text-muted); cursor: pointer; transition: all 0.15s; }
+        .btn-read:hover { background: var(--bg); border-color: var(--text-muted); }
+
+        /* ---- Thumbnail in card ---- */
+        .news-thumb {
+            width: 120px; height: 80px; border-radius: 6px; object-fit: cover; flex-shrink: 0;
+            background: #f0f2f5; box-shadow: var(--shadow-sm);
+        }
+        .media-indicators { display: inline-flex; gap: 8px; font-size: 11px; color: var(--text-muted); }
+        .media-indicators span { display: inline-flex; align-items: center; gap: 2px; }
+        .link-original { font-size: 11px; color: var(--primary); text-decoration: none; margin-left: auto; }
+        .link-original:hover { text-decoration: underline; }
+
+        /* ---- Rank Badges: Gold / Silver / Bronze ---- */
+        .rank-badge {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 28px; height: 28px; border-radius: 8px;
+            background: #e9ecef; color: #666; font-size: 13px; font-weight: 700;
+            flex-shrink: 0; margin-top: 2px;
+        }
+        .rank-badge.rank-1 { background: var(--rank-gold); color: #fff; box-shadow: 0 2px 6px rgba(245,158,11,0.4); }
+        .rank-badge.rank-2 { background: var(--rank-silver); color: #fff; box-shadow: 0 2px 6px rgba(148,163,184,0.4); }
+        .rank-badge.rank-3 { background: var(--rank-bronze); color: #fff; box-shadow: 0 2px 6px rgba(180,83,9,0.35); }
+
+        /* ---- Sidebar ---- */
+        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+        .sidebar-card { background: var(--card); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow-sm); }
+        .sidebar-card h3 { font-size: 13px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+        .source-stats { list-style: none; }
+        .source-stats li { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px; border-bottom: 1px solid #f8f9fa; transition: background 0.15s; }
+        .source-stats li:last-child { border-bottom: none; }
+        .source-stats li:hover { background: var(--bg); margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 4px; }
+        .source-stats a { text-decoration: none; color: var(--text); }
+        .source-stats a:hover { color: var(--primary); }
+        .source-stats .count { color: var(--text-muted); font-size: 12px; }
+        .quick-links { display: flex; flex-direction: column; gap: 8px; }
+        .quick-links a { color: var(--primary); text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 6px; transition: background 0.15s; display: flex; align-items: center; gap: 6px; }
+        .quick-links a:hover { background: var(--primary-light); }
+        .quick-links a::before { content: '\2192'; font-size: 12px; }
+
+        /* ---- Pagination ---- */
+        .pagination { display: flex; justify-content: center; gap: 6px; margin: 32px 0; }
+        .pagination a {
+            padding: 8px 16px; background: var(--card); border: 1px solid var(--border);
+            border-radius: 8px; text-decoration: none; color: var(--text); font-size: 13px;
+            transition: all 0.2s; box-shadow: var(--shadow-sm);
+        }
+        .pagination a:hover { border-color: var(--primary); color: var(--primary); box-shadow: var(--shadow-md); }
+        .pagination a.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+        /* ---- Alert Bar ---- */
+        .alert-bar { background: #fffbeb; border-bottom: 1px solid #fde68a; padding: 10px 0; }
+        .alert-bar .container { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #92400e; }
+        .alert-bar a { margin-left: auto; color: var(--primary); text-decoration: none; font-size: 12px; }
+        .alert-bar a:hover { text-decoration: underline; }
+
+        /* ---- Empty State ---- */
+        .empty { text-align: center; padding: 80px 20px; color: var(--text-muted); }
+        .empty p { font-size: 16px; margin-bottom: 12px; }
+        .empty a { color: var(--primary); text-decoration: none; }
+        .empty a:hover { text-decoration: underline; }
+
+        /* ---- Footer ---- */
+        .footer { background: var(--card); border-top: 1px solid var(--border); padding: 20px 0; margin-top: 20px; }
+        .footer .container { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--text-muted); }
+        .footer a { color: var(--text-secondary); text-decoration: none; }
+        .footer a:hover { color: var(--primary); }
+        #auto-refresh-timer { font-variant-numeric: tabular-nums; }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 768px) {
+            .layout { grid-template-columns: 1fr; }
+            .sidebar { order: -1; }
+            .filter-form { flex-direction: column; }
+            .filter-form input, .filter-form select { width: 100%; }
+            .header .container { flex-direction: column; gap: 12px; }
+            .stats-bar { justify-content: flex-start; }
+            .footer .container { flex-direction: column; gap: 8px; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <div>
+                <h1><a href="/">新闻聚合平台</a></h1>
+            </div>
+            <div>
+                <div class="stats-bar">
+                    <span>数据库共 {{ stats.total }} 篇</span>
+                    {% if stats.last_update %}
+                    <span>最近更新: {{ stats.last_update }}</span>
+                    {% endif %}
+                    <span>{{ stats.sources|length }} 个来源</span>
+                    <span id="crawl-btn" onclick="triggerCrawl()" style="cursor:pointer;background:rgba(67,97,238,0.25);color:#93b4ff;" title="手动触发一轮爬取">立即爬取</span>
+                </div>
+            </div>
+        </div>
+        <div class="nav-wrap">
+            <div class="container">
+                <div class="nav-links">
+                    <a href="/" class="active">最新新闻</a>
+                    <a href="/archive">历史新闻</a>
+                    <a href="/health">爬虫状态</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="filters">
+        <div class="container">
+            <form class="filter-form" method="GET" action="/">
+                <select name="source">
+                    <option value="">-- 全部来源 --</option>
+                    {% for display_name, mod_name in sites %}
+                    <option value="{{ mod_name }}" {% if current_source == mod_name %}selected{% endif %}>{{ display_name }}</option>
+                    {% endfor %}
+                </select>
+                <select name="language">
+                    <option value="">-- 全部语言 --</option>
+                    <option value="zh" {% if current_language == 'zh' %}selected{% endif %}>中文</option>
+                    <option value="en" {% if current_language == 'en' %}selected{% endif %}>英文</option>
+                </select>
+                <input type="text" name="keyword" placeholder="输入关键词搜索..." value="{{ current_keyword }}">
+                <button type="submit" class="btn-primary">搜索</button>
+                <a href="/" class="btn-outline">重置</a>
+            </form>
+        </div>
+    </div>
+
+    {% if alerts %}
+    <div class="alert-bar">
+        <div class="container">
+            <strong>&#9888; 爬虫异常:</strong>
+            <span>{{ alerts | join('; ') }}</span>
+            <a href="/health">查看详情 &rarr;</a>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="content">
+        <div class="container">
+            <div class="layout">
+                <div>
+                    <div class="section-title">
+                        <span>最新新闻 (最近 1 小时)</span>
+                        <span class="hint">显示 {{ total_count }} 条 | <a href="/archive">查看全部历史 &rarr;</a></span>
+                    </div>
+                    <div class="news-list">
+                        {% if news_list %}
+                            {% for item in news_list %}
+                            <div class="news-item {% if item.is_read %}read{% endif %}" id="news-{{ item.id }}">
+                                <div style="display:flex;align-items:flex-start;gap:12px;">
+                                    {% if item.rank %}
+                                    <span class="rank-badge {% if item.rank == 1 %}rank-1{% elif item.rank == 2 %}rank-2{% elif item.rank == 3 %}rank-3{% endif %}">{{ item.rank }}</span>
+                                    {% endif %}
+                                    {% if item.thumbnail or item.thumbnail_local %}
+                                    <img class="news-thumb"
+                                         src="{% if item.thumbnail_local %}/media/{{ item.thumbnail_local }}{% else %}{{ item.thumbnail }}{% endif %}"
+                                         alt="" loading="lazy" onerror="this.style.display='none'">
+                                    {% endif %}
+                                    <div style="flex:1;min-width:0;">
+                                        <a class="title-link" href="/news/{{ item.id }}"
+                                           onclick="markRead({{ item.id }})">{{ item.title }}</a>
+                                        {% if item.summary %}
+                                        <div class="news-summary">{{ item.summary }}</div>
+                                        {% endif %}
+                                        <div class="news-meta">
+                                            <span class="source {{ item.language }}">{{ item.source_name or item.source }}</span>
+                                            {% if item.author %}<span>{{ item.author }}</span>{% endif %}
+                                            {% if item.category %}
+                                            <span>{{ item.category }}</span>
+                                            {% endif %}
+                                            <span>{{ item.crawl_time }}</span>
+                                            {% if item.images and item.images|length > 0 or item.videos and item.videos|length > 0 %}
+                                            <span class="media-indicators">
+                                                {% if item.images and item.images|length > 0 %}<span>&#128247; {{ item.images|length }}</span>{% endif %}
+                                                {% if item.videos and item.videos|length > 0 %}<span>&#127909; {{ item.videos|length }}</span>{% endif %}
+                                            </span>
+                                            {% endif %}
+                                            <a class="link-original" href="{{ item.url }}" target="_blank" rel="noopener">原文</a>
+                                            {% if not item.is_read %}
+                                            <button class="btn-read" onclick="markRead({{ item.id }}); return false;">已读</button>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+
+                            {% if total_pages > 1 %}
+                            <div class="pagination">
+                                {% if current_page > 1 %}
+                                <a href="?source={{ current_source|urlencode }}&language={{ current_language|urlencode }}&keyword={{ current_keyword|urlencode }}&page={{ current_page - 1 }}">上一页</a>
+                                {% endif %}
+                                <a class="active">第 {{ current_page }} / {{ total_pages }} 页 (共 {{ total_count }} 条)</a>
+                                {% if current_page < total_pages %}
+                                <a href="?source={{ current_source|urlencode }}&language={{ current_language|urlencode }}&keyword={{ current_keyword|urlencode }}&page={{ current_page + 1 }}">下一页</a>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        {% else %}
+                            <div class="empty">
+                                <p>最近 1 小时暂无新数据</p>
+                                <a href="/archive">查看历史新闻 &rarr;</a>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="sidebar">
+                    <div class="sidebar-card">
+                        <h3>来源统计</h3>
+                        <ul class="source-stats">
+                            {% for s in stats.sources %}
+                            <li>
+                                <a href="?source={{ s.source }}">{{ s.source_name or s.source }}</a>
+                                <span class="count">{{ s.count }} 篇</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                    <div class="sidebar-card">
+                        <h3>快捷入口</h3>
+                        <div class="quick-links">
+                            <a href="/archive">全部历史新闻</a>
+                            <a href="/archive?language=zh">中文历史新闻</a>
+                            <a href="/archive?language=en">英文历史新闻</a>
+                            <a href="/health">爬虫健康面板</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <div class="container">
+            <span>新闻聚合平台 &middot; {{ site_count }} 个来源 &middot; 每小时自动爬取</span>
+            <span id="auto-refresh-timer"></span>
+        </div>
+    </footer>
+
+    <script>
+    function markRead(newsId) {
+        // 使用 sendBeacon 确保导航时请求不被取消
+        if (navigator.sendBeacon) {
+            navigator.sendBeacon('/api/mark_read/' + newsId);
+        } else {
+            fetch('/api/mark_read/' + newsId, { method: 'POST', keepalive: true });
+        }
+        var el = document.getElementById('news-' + newsId);
+        if (el) el.classList.add('read');
+    }
+
+    function triggerCrawl() {
+        var btn = document.getElementById('crawl-btn');
+        if (btn.dataset.running === '1') return;
+        if (!confirm('确定要立即触发一轮爬取吗？')) return;
+        btn.dataset.running = '1';
+        btn.textContent = '爬取中...';
+        btn.style.opacity = '0.6';
+        fetch('/api/crawl', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.ok) {
+                    alert(data.msg);
+                    btn.dataset.running = '';
+                    btn.textContent = '立即爬取';
+                    btn.style.opacity = '1';
+                    return;
+                }
+                var poll = setInterval(function() {
+                    fetch('/api/crawl/status')
+                        .then(function(r) { return r.json(); })
+                        .then(function(s) {
+                            if (!s.running) {
+                                clearInterval(poll);
+                                btn.dataset.running = '';
+                                btn.textContent = '立即爬取';
+                                btn.style.opacity = '1';
+                                window.location.reload();
+                            }
+                        });
+                }, 3000);
+            })
+            .catch(function() {
+                btn.dataset.running = '';
+                btn.textContent = '立即爬取';
+                btn.style.opacity = '1';
+            });
+    }
+
+    /* Auto-refresh countdown */
+    (function() {
+        var INTERVAL = 3 * 60;
+        var remaining = INTERVAL;
+        var lastTotal = {{ stats.total }};
+        var timerEl = document.getElementById('auto-refresh-timer');
+
+        function pad(n) { return n < 10 ? '0' + n : n; }
+        function updateTimer() {
+            var m = Math.floor(remaining / 60);
+            var s = remaining % 60;
+            timerEl.textContent = '自动刷新: ' + pad(m) + ':' + pad(s);
+        }
+
+        setInterval(function() {
+            remaining--;
+            if (remaining <= 0) {
+                remaining = INTERVAL;
+                fetch('/api/stats')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        if (data.total > lastTotal) {
+                            window.location.reload();
+                        }
+                    });
+            }
+            updateTimer();
+        }, 1000);
+        updateTimer();
+    })();
+    </script>
+</body>
+</html>

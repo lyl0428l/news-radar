@@ -1,0 +1,18 @@
+# 统一换行符：所有文本文件在仓库中存储为 LF，checkout 到 Windows 时保持 LF
+* text=auto eol=lf
+
+# Shell 脚本强制 LF（在 Linux 服务器上执行，必须是 LF）
+*.sh text eol=lf
+
+# Windows 批处理脚本保持 CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pem binary
+*.db binary

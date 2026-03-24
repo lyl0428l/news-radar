@@ -1,0 +1,87 @@
+# ============================================
+# Docker Compose 部署配置
+# 包含两个服务：爬虫调度器 + Web 查看界面
+# ============================================
+#
+# 使用方法：
+#   启动:  docker compose up -d
+#   停止:  docker compose down
+#   查看日志: docker compose logs -f
+#   查看状态: docker compose ps
+#
+# ============================================
+
+services:
+
+  # ========== 爬虫调度器（定时爬取 + 数据清理） ==========
+  crawler:
+    image: ${DOCKER_IMAGE:-news-radar}:${IMAGE_TAG:-latest}
+    container_name: news-radar-crawler
+    restart: unless-stopped                        # 异常退出时自动重启
+    command: ["python", "scheduler.py"]            # 运行调度器
+    volumes:
+      - crawler-data:/app/data                     # 持久化数据目录（SQLite + JSON）
+      - crawler-logs:/app/logs                     # 持久化日志目录
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      - PUSH_ENABLED=${PUSH_ENABLED:-true}
+      - PUSH_TOKEN=${PUSH_TOKEN:-}
+      - PUSH_TOPIC=${PUSH_TOPIC:-}
+      - SYNC_ENABLED=${SYNC_ENABLED:-false}
+      - SYNC_SERVER_URL=${SYNC_SERVER_URL:-}
+      - SYNC_USERNAME=${SYNC_USERNAME:-}
+      - SYNC_PASSWORD=${SYNC_PASSWORD:-}
+    env_file:
+      - path: .env
+        required: false                            # .env 不存在时不报错（使用上方默认值）
+    deploy:
+      resources:
+        limits:
+          memory: 768m                             # 内存上限：峰值约 350MB，留 2× 缓冲
+          cpus: '1.5'                              # CPU 上限：爬虫峰值约单核 60-80%
+        reservations:
+          memory: 128m                             # 预留内存：空闲期约 40MB
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sqlite3, os; conn=sqlite3.connect(os.path.join('data','news.db')); conn.close()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # ========== Web 服务（新闻查看界面） ==========
+  web:
+    image: ${DOCKER_IMAGE:-news-radar}:${IMAGE_TAG:-latest}
+    container_name: news-radar-web
+    restart: unless-stopped
+    command: ["python", "-c", "from web.app import app; from waitress import serve; serve(app, host='0.0.0.0', port=5000)"]
+    ports:
+      - "${WEB_PORT:-8888}:5000"                   # 映射端口：宿主机 8888 → 容器 5000（可通过环境变量覆盖）
+    volumes:
+      - crawler-data:/app/data                     # 共享数据目录（读取爬虫写入的数据）
+      - crawler-logs:/app/logs
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+    env_file:
+      - path: .env
+        required: false
+    deploy:
+      resources:
+        limits:
+          memory: 256m                             # 内存上限：Web 空闲 60MB，峰值 120MB
+          cpus: '0.5'                              # CPU 上限：Web 服务为低负载
+        reservations:
+          memory: 64m                              # 预留内存：Waitress 基础开销
+    depends_on:
+      crawler:
+        condition: service_started                 # 等爬虫服务启动后再启动 Web
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# ========== 持久化数据卷 ==========
+volumes:
+  crawler-data:
+    name: news-radar-data                          # 数据卷名称
+  crawler-logs:
+    name: news-radar-logs                          # 日志卷名称

@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+RUN pip install --no-cache-dir flask waitress
+COPY server_receiver.py .
+RUN mkdir -p data
+EXPOSE 5000
+CMD ["python", "server_receiver.py"]

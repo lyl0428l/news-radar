@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>500 - 服务器错误</title>
+    <style>
+        :root {
+            --primary: #4361ee;
+            --error: #ef4444;
+            --bg: #f0f2f5;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Microsoft YaHei", "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .container { text-align: center; padding: 40px; }
+        h1 { font-size: 120px; color: var(--error); margin-bottom: 20px; font-weight: 700; }
+        h2 { font-size: 24px; margin-bottom: 15px; }
+        p { color: var(--text-secondary); margin-bottom: 30px; }
+        a { color: var(--primary); text-decoration: none; font-weight: 500; }
+        a:hover { text-decoration: underline; }
+        .btn { display: inline-block; background: var(--primary); color: #fff; padding: 12px 24px; border-radius: 8px; font-weight: 600; transition: background 0.2s; }
+        .btn:hover { background: #3a56d4; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>500</h1>
+        <h2>服务器内部错误</h2>
+        <p>服务器遇到了一个错误，请稍后再试</p>
+        <a href="/" class="btn">返回首页</a>
+    </div>
+</body>
+</html>
