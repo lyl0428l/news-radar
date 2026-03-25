@@ -200,6 +200,14 @@ def push_crawl_summary(items: list, success_count: int,
     if not top2:
         top2 = items[:2]
 
+    # 汇总推送条数由配置决定（默认1条，节省每日配额）
+    try:
+        from config import PUSH_SUMMARY_COUNT
+        summary_count = max(1, int(PUSH_SUMMARY_COUNT))
+    except Exception:
+        summary_count = 1
+    top2 = top2[:summary_count]
+
     logger.info(f"[推送] 准备推送排名前 {len(top2)} 条新闻 (content_html有效: {sum(1 for i in top2 if _has_content_html(i))} 条)")
 
     for idx, item in enumerate(top2, start=1):
@@ -279,9 +287,16 @@ def check_and_push_breaking(items: list):
     if not PUSH_BREAKING_KEYWORDS:
         return
 
+    # 每轮重大新闻推送上限由配置决定（默认3条，防止超限）
+    try:
+        from config import PUSH_BREAKING_MAX_PER_ROUND
+        max_per_round = max(1, int(PUSH_BREAKING_MAX_PER_ROUND))
+    except Exception:
+        max_per_round = 3
+
     pushed = 0
     for item in items:
-        if pushed >= 10:
+        if pushed >= max_per_round:
             break
         title = item.get("title", "")
         title_lower = title.lower()
