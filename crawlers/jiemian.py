@@ -3,8 +3,9 @@
 
 列表获取（多级回退）:
   1. 首页 HTML（主力，无需 API）
-  2. AJAX 分页 API（后备，获取更多文章）
-  3. Google News RSS（最终后备，在首页改版为 JS 渲染时仍可用）
+  2. 频道分类页补充（财经/科技/商业）
+  3. 界面新闻 AJAX API（后备）
+  4. 界面新闻 RSS 源（最终后备，无需访问 Google）
 
 优化:
   - 过滤短讯/快报类内容，优先保留有实质内容的长文
@@ -13,7 +14,6 @@
 import re
 import json
 import logging
-import requests
 import feedparser
 from bs4 import BeautifulSoup
 from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 # 界面新闻 AJAX 分页 API（返回 HTML 片段）
 _AJAX_API = "https://a.jiemian.com/index.php?m=index&a=indexAjaxJmedia&page={page}"
 
-# Google News RSS 后备
-_GOOGLE_NEWS_RSS = (
-    "https://news.google.com/rss/search"
-    "?q=site:jiemian.com+when:1d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-)
+# 界面新闻自有 RSS 源（国内可访问，替代 Google News RSS）
+_JIEMIAN_RSS_URLS = [
+    "https://www.jiemian.com/rss/",                    # 全站 RSS
+    "https://www.jiemian.com/lists/2.html?format=rss", # 财经频道
+]
 
 # 界面新闻频道页（补充更多高质量文章）
 _CHANNEL_PAGES = [
@@ -46,6 +46,100 @@ class JiemianCrawler(BaseCrawler):
         self.name = "jiemian"
         self.display_name = "界面新闻"
         self.language = "zh"
+
+    def parse_detail(self, html: str, url: str) -> dict:
+        """界面新闻详情页解析：通用提取器 + 作者/时间补充"""
+        from utils.content_extractor import extract_content
+        result = extract_content(html, url, selectors=self.detail_selectors)
+
+        if not html:
+            return result
+
+        try:
+            soup = BeautifulSoup(html, "lxml")
+
+            # 补充作者
+            if not result.get("author"):
+                # 方案1：.article-author / .author-name / .byline
+                for sel in (".article-author", ".author-name", ".byline",
+                            ".article__author", "[class*='author']",
+                            ".writer", ".reporter", ".article-source"):
+                    el = soup.select_one(sel)
+                    if el:
+                        text = el.get_text(strip=True)
+                        text = text.replace("作者：", "").replace("记者：", "").strip()
+                        if text and len(text) < 50:
+                            result["author"] = text
+                            break
+
+            if not result.get("author"):
+                # 方案2：<meta name="author">
+                m = soup.find("meta", attrs={"name": "author"})
+                if m:
+                    result["author"] = (m.get("content") or "").strip()
+
+            if not result.get("author"):
+                # 方案3：JSON-LD 结构化数据
+                for script in soup.find_all("script", type="application/ld+json"):
+                    try:
+                        import json as _json
+                        data = _json.loads(script.string or "")
+                        author = data.get("author", {})
+                        if isinstance(author, dict):
+                            name = author.get("name", "").strip()
+                        elif isinstance(author, list) and author:
+                            name = (author[0].get("name", "") if isinstance(author[0], dict)
+                                    else str(author[0])).strip()
+                        else:
+                            name = str(author).strip()
+                        if name and len(name) < 50:
+                            result["author"] = name
+                            break
+                    except Exception:
+                        continue
+
+            # 补充发布时间
+            if not result.get("pub_time"):
+                # 方案1：<meta property="article:published_time">
+                m = (soup.find("meta", attrs={"property": "article:published_time"}) or
+                     soup.find("meta", attrs={"name": "pubdate"}) or
+                     soup.find("meta", attrs={"name": "publish_date"}))
+                if m:
+                    val = (m.get("content") or "").strip()
+                    if val:
+                        result["pub_time"] = self.parse_time(val)
+
+            if not result.get("pub_time"):
+                # 方案2：页面时间元素
+                for sel in (".article-time", ".publish-time", ".article__time",
+                            "time[datetime]", "[class*='time']", "[class*='date']"):
+                    el = soup.select_one(sel)
+                    if el:
+                        # 优先取 datetime 属性
+                        dt = el.get("datetime", "") or el.get_text(strip=True)
+                        parsed = self.parse_time(dt)
+                        if parsed:
+                            result["pub_time"] = parsed
+                            break
+
+            if not result.get("pub_time"):
+                # 方案3：JSON-LD 时间
+                for script in soup.find_all("script", type="application/ld+json"):
+                    try:
+                        import json as _json
+                        data = _json.loads(script.string or "")
+                        dt = (data.get("datePublished") or
+                              data.get("dateModified") or "").strip()
+                        if dt:
+                            result["pub_time"] = self.parse_time(dt)
+                            break
+                    except Exception:
+                        continue
+
+        except Exception as e:
+            self.logger.debug(f"[jiemian] 作者/时间补充失败: {e}")
+
+        return result
 
     # ================================================================
     #  列表获取
@@ -76,9 +170,9 @@ class JiemianCrawler(BaseCrawler):
                     seen.add(url)
                     candidates.append(it)
 
-        # 方案 3: Google News RSS（最终后备）
+        # 方案 3: 界面新闻自有 RSS（最终后备，国内可直接访问）
         if len(candidates) < 5:
-            rss_items = self._crawl_google_news_rss()
+            rss_items = self._crawl_jiemian_rss()
             for it in rss_items:
                 url = it.get("url", "")
                 if url not in seen:
@@ -119,48 +213,44 @@ class JiemianCrawler(BaseCrawler):
             results.extend(items)
         return results
 
-    def _crawl_google_news_rss(self) -> list:
-        """Google News RSS 后备"""
-        try:
-            resp = requests.get(_GOOGLE_NEWS_RSS, timeout=15,
-                                headers={"User-Agent": "Mozilla/5.0"})
-            if resp.status_code != 200:
-                return []
-            feed = feedparser.parse(resp.content)
-            if not feed.entries:
-                return []
-
-            results = []
-            for entry in feed.entries[:20]:
-                title = str(entry.get("title", "")).strip()
-                link = str(entry.get("link", "")).strip()
-                # 清理标题后缀 " - 界面新闻"
-                title = re.sub(r"\s*-\s*(?:界面新闻|Jiemian\.com).*$", "", title)
-
-                # 尝试解析 Google News 重定向
-                try:
-                    r = requests.head(link, allow_redirects=True, timeout=8,
-                                      headers={"User-Agent": "Mozilla/5.0"})
-                    if "jiemian.com" in r.url:
-                        link = r.url
-                except Exception:
-                    pass
-
-                if "jiemian.com" not in link:
+    def _crawl_jiemian_rss(self) -> list:
+        """界面新闻自有 RSS 源（国内可直接访问，无需 Google）"""
+        results = []
+        seen = set()
+        for rss_url in _JIEMIAN_RSS_URLS:
+            try:
+                resp = self._request(rss_url, timeout=15)
+                if resp is None:
                     continue
-                if not title or len(title) < MIN_TITLE_LEN_ZH:
+                feed = feedparser.parse(resp.content)
+                if not feed.entries:
                     continue
-
-                pub_time = str(entry.get("published", ""))
-                results.append(self._make_item(
-                    title=title, url=link, rank=0, category="头条",
-                    pub_time=self.parse_time(pub_time),
-                ))
-
-            return results
-        except Exception as e:
-            logger.debug(f"[jiemian] Google News RSS 失败: {e}")
-            return []
+                for entry in feed.entries[:20]:
+                    title = str(entry.get("title", "")).strip()
+                    link = str(entry.get("link", "")).strip()
+                    # 清理标题后缀
+                    title = re.sub(r"\s*[-|]\s*界面新闻.*$", "", title).strip()
+                    if not title or len(title) < MIN_TITLE_LEN_ZH:
+                        continue
+                    if "jiemian.com" not in link:
+                        continue
+                    if link in seen:
+                        continue
+                    seen.add(link)
+                    # 提取作者
+                    author = str(entry.get("author", "") or
+                                 entry.get("dc_creator", "")).strip()
+                    pub_time = self.parse_time(str(entry.get("published", "")))
+                    results.append(self._make_item(
+                        title=title, url=link, rank=0, category="头条",
+                        pub_time=pub_time, author=author,
+                    ))
+                if results:
+                    logger.info(f"[jiemian] RSS 获取 {len(results)} 条")
+                    return results
+            except Exception as e:
+                logger.debug(f"[jiemian] RSS {rss_url} 失败: {e}")
+        return results
 
     def _extract_article_links(self, html: str) -> list:
         """从页面 HTML 中提取文章链接"""

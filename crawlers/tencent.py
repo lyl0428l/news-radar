@@ -127,38 +127,37 @@ class TencentCrawler(BaseCrawler):
             except Exception as e:
                 self.logger.warning(f"[tencent] 热榜 API 失败: {e}")
 
-        # 备选: Playwright 渲染首页取前 10
+        # 备选: 腾讯新闻移动端热榜 API（轻量，无需 Playwright）
         try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                try:
-                    page = browser.new_page()
-                    page.goto("https://news.qq.com/", wait_until="domcontentloaded", timeout=20000)
-                    page.wait_for_timeout(3000)
-                    html = page.content()
-                finally:
-                    browser.close()
-                soup = BeautifulSoup(html, "lxml")
+            resp2 = self._request(
+                "https://i.news.qq.com/gw/event/hot_ranking_list",
+                params={"offset": 0, "page_size": 10, "rank_type": 1},
+            )
+            if resp2:
+                data2 = resp2.json()
+                idlist2 = _safe_list(data2.get("idlist"))
+                first2 = _safe_dict(idlist2[0] if idlist2 else {})
+                items2 = _safe_list(first2.get("newslist"))
                 rank = 1
-                seen = set()
-                for a in soup.find_all("a", href=True):
-                    href = _safe_str(a.get("href"))
-                    title = a.get_text(strip=True)
-                    if (title and len(title) >= MIN_TITLE_LEN_ZH
-                            and "new.qq.com/rain/a/" in href
-                            and href not in seen):
-                        seen.add(href)
-                        if not href.startswith("http"):
-                            href = "https:" + href if href.startswith("//") else "https://new.qq.com" + href
-                        results.append(self._make_item(
-                            title=title, url=href, rank=rank, category="热榜"
-                        ))
-                        rank += 1
-                        if rank > 10:
-                            break
+                for item in items2:
+                    if not isinstance(item, dict):
+                        continue
+                    title = _safe_str(item.get("title"))
+                    url = _safe_str(item.get("url") or item.get("surl"))
+                    if not title or not url or not url.startswith("http"):
+                        continue
+                    if title in ("腾讯新闻", "腾讯网"):
+                        continue
+                    results.append(self._make_item(
+                        title=title, url=url, rank=rank,
+                        summary=_safe_str(item.get("abstract")),
+                        category="热榜",
+                    ))
+                    rank += 1
+                    if rank > 10:
+                        break
         except Exception as e:
-            self.logger.warning(f"[tencent] Playwright 备选失败: {e}")
+            self.logger.warning(f"[tencent] 备用 API 失败: {e}")
 
         return results
 

@@ -131,6 +131,7 @@ class CCTVCrawler(BaseCrawler):
         2. 从 JS 中提取视频 guid
         3. 通过 CNTV API 获取实际视频 URL
         4. 将视频嵌入 content_html
+        5. 补充作者/来源字段
         """
         from utils.content_extractor import extract_content
         result = extract_content(html, url, selectors=self.detail_selectors)
@@ -152,6 +153,47 @@ class CCTVCrawler(BaseCrawler):
                 )
                 for v in videos:
                     v["in_content"] = True
+
+        # 补充作者/来源
+        if html and not result.get("author"):
+            try:
+                soup = BeautifulSoup(html, "lxml")
+
+                # 方案1：<meta name="author"> 或 <meta name="source">
+                for meta_name in ("author", "source", "mediaid"):
+                    m = soup.find("meta", attrs={"name": meta_name})
+                    if m:
+                        val = (m.get("content") or "").strip()
+                        if val:
+                            result["author"] = val
+                            break
+
+                # 方案2：.info-source / .article-info / .cnt-info
+                if not result.get("author"):
+                    for sel in (".info-source", ".article-info", ".cnt-info",
+                                ".from", "[class*='source']", ".editor",
+                                ".article_info", ".cnt_bd .info"):
+                        el = soup.select_one(sel)
+                        if el:
+                            text = el.get_text(strip=True)
+                            text = text.replace("来源：", "").replace("来源:", "").strip()
+                            if text and len(text) < 50:
+                                result["author"] = text
+                                break
+
+                # 补充发布时间
+                if not result.get("pub_time"):
+                    for sel in (".info-time", ".article-time", ".pubTime",
+                                "[class*='time']", "[class*='date']", ".cnt-info span"):
+                        el = soup.select_one(sel)
+                        if el:
+                            text = el.get_text(strip=True)
+                            parsed = self.parse_time(text)
+                            if parsed:
+                                result["pub_time"] = parsed
+                                break
+            except Exception as e:
+                self.logger.debug(f"[cctv] 作者/时间补充失败: {e}")
 
         return result
 

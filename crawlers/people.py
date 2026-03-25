@@ -12,6 +12,61 @@ class PeopleCrawler(BaseCrawler):
     # .col-1 是更大的列容器，作为二级回退
     detail_selectors = [".rm_txt_con", "#rwb_zw", ".text_con", ".col-1", ".article"]
 
+    def parse_detail(self, html: str, url: str) -> dict:
+        """人民网专用详情页解析：通用提取器 + 作者/来源/时间补充"""
+        from utils.content_extractor import extract_content
+        result = extract_content(html, url, selectors=self.detail_selectors)
+
+        if not html:
+            return result
+
+        try:
+            soup = BeautifulSoup(html, "lxml")
+
+            # 补充作者
+            if not result.get("author"):
+                # 方案1：.col-1-1 p.sou / .author / .article-author
+                for sel in (".col-1-1 .sou", ".author", ".article-author",
+                            ".edit", "[class*='author']", "[class*='source']",
+                            ".article_info .sou", ".info .sou"):
+                    el = soup.select_one(sel)
+                    if el:
+                        text = el.get_text(strip=True)
+                        # 过滤"来源："前缀
+                        text = text.replace("来源：", "").replace("来源:", "").strip()
+                        if text and len(text) < 50:
+                            result["author"] = text
+                            break
+
+            if not result.get("author"):
+                # 方案2：<meta name="author">
+                m = soup.find("meta", attrs={"name": "author"})
+                if m:
+                    result["author"] = (m.get("content") or "").strip()
+
+            if not result.get("author"):
+                # 方案3：<meta name="source"> 人民网特有字段
+                m = soup.find("meta", attrs={"name": "source"})
+                if m:
+                    result["author"] = (m.get("content") or "").strip()
+
+            # 补充发布时间
+            if not result.get("pub_time"):
+                for sel in (".col-1-1 .sou span", ".pubtime", ".article_info .time",
+                            ".info .time", "[class*='time']", "[class*='date']"):
+                    el = soup.select_one(sel)
+                    if el:
+                        text = el.get_text(strip=True)
+                        parsed = self.parse_time(text)
+                        if parsed:
+                            result["pub_time"] = parsed
+                            break
+
+        except Exception as e:
+            self.logger.debug(f"[people] 作者/时间补充失败: {e}")
+
+        return result
+
     def __init__(self):
         super().__init__()
         self.name = "people"

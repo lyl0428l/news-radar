@@ -17,6 +17,63 @@ class NeteaseCrawler(BaseCrawler):
         self.display_name = "网易新闻"
         self.language = "zh"
 
+    def parse_detail(self, html: str, url: str) -> dict:
+        """网易专用详情页解析：通用提取器 + 作者/时间补充"""
+        from utils.content_extractor import extract_content
+        result = extract_content(html, url, selectors=self.detail_selectors)
+
+        if not html:
+            return result
+
+        try:
+            soup = BeautifulSoup(html, "lxml")
+
+            # 补充作者：网易文章页的来源/作者字段
+            if not result.get("author"):
+                # 方案1：<meta name="author" content="...">
+                meta_author = soup.find("meta", attrs={"name": "author"})
+                if meta_author:
+                    result["author"] = (meta_author.get("content") or "").strip()
+
+            if not result.get("author"):
+                # 方案2：.post_author / .source / .ep-source
+                for sel in (".post_author", ".source", ".ep-source", ".author",
+                            "[class*='source']", "[class*='author']"):
+                    el = soup.select_one(sel)
+                    if el:
+                        text = el.get_text(strip=True)
+                        if text and len(text) < 50:
+                            result["author"] = text
+                            break
+
+            if not result.get("author"):
+                # 方案3：<meta name="mediaid"> 或 <meta property="og:site_name">
+                for meta_name in ({"name": "mediaid"}, {"property": "og:site_name"}):
+                    m = soup.find("meta", attrs=meta_name)
+                    if m:
+                        val = (m.get("content") or "").strip()
+                        if val:
+                            result["author"] = val
+                            break
+
+            # 补充发布时间
+            if not result.get("pub_time"):
+                # <meta name="publishdate" content="2026-03-25 10:00:00">
+                for meta_name in ("publishdate", "pubdate", "publish_time",
+                                  "article:published_time"):
+                    m = soup.find("meta", attrs={"name": meta_name}) or \
+                        soup.find("meta", attrs={"property": meta_name})
+                    if m:
+                        val = (m.get("content") or "").strip()
+                        if val:
+                            result["pub_time"] = self.parse_time(val)
+                            break
+
+        except Exception as e:
+            self.logger.debug(f"[netease] 作者/时间补充失败: {e}")
+
+        return result
+
     def crawl(self) -> list[dict]:
         results = []
 
