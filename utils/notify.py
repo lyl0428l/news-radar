@@ -43,11 +43,10 @@ def _send(token: str, title: str, content: str,
         data = resp.json()
 
         if data.get("code") == 200:
-            safe_title = title[:30].encode("ascii", "ignore").decode()
-            logger.info(f"[推送] 发送成功: {safe_title or title[:30]}")
+            logger.info(f"[推送] 发送成功: {title[:40]}")
             return True
         else:
-            logger.warning(f"[推送] 发送失败: {data.get('msg', '未知错误')}")
+            logger.warning(f"[推送] 发送失败 (code={data.get('code')}): {data.get('msg', '未知错误')}")
             return False
 
     except Exception as e:
@@ -177,19 +176,31 @@ def push_crawl_summary(items: list, success_count: int,
                         PUSH_SUMMARY_ENABLED)
 
     if not PUSH_ENABLED or not PUSH_SUMMARY_ENABLED or not PUSH_TOKEN:
+        logger.debug(f"[推送] 汇总推送已跳过: enabled={PUSH_ENABLED} summary={PUSH_SUMMARY_ENABLED} token={'有' if PUSH_TOKEN else '无'}")
         return
     if not items:
+        logger.debug("[推送] 汇总推送已跳过: items为空")
         return
 
+    # items 可能来自爬虫内存（字段是对象）或数据库读取（字段是JSON字符串）
+    # 统一取 content_html 字符串长度来判断是否有正文
+    def _has_content_html(item):
+        v = item.get("content_html", "") or ""
+        return isinstance(v, str) and len(v) > 50
+
+    def _has_content(item):
+        v = item.get("content", "") or ""
+        return isinstance(v, str) and len(v) > 50
+
     # 优先取有完整正文（content_html 非空）的前2条，确保推送内容完整
-    # 回退：若无 content_html 则取有纯文本 content 的，最后兜底取前2条
-    top2 = [i for i in items if i.get("content_html") and len(i.get("content_html", "")) > 50][:2]
+    top2 = [i for i in items if _has_content_html(i)][:2]
     if len(top2) < 2:
-        supplement = [i for i in items
-                      if i not in top2 and i.get("content") and len(i.get("content", "")) > 50]
+        supplement = [i for i in items if i not in top2 and _has_content(i)]
         top2 = (top2 + supplement)[:2]
     if not top2:
         top2 = items[:2]
+
+    logger.info(f"[推送] 准备推送排名前 {len(top2)} 条新闻 (content_html有效: {sum(1 for i in top2 if _has_content_html(i))} 条)")
 
     for idx, item in enumerate(top2, start=1):
         item_title = item.get("title", "无标题")

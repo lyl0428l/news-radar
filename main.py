@@ -268,7 +268,7 @@ def run_single_crawl():
                 all_results, success_count, len(enabled_sites), fail_list
             )
         except Exception as e:
-            logger.debug(f"推送失败（不影响正常爬取）: {e}")
+            logger.warning(f"推送失败: {e}", exc_info=True)
 
     else:                                                  # 本轮没有爬取到任何数据
         logger.warning("本轮未获取到任何新闻")                 # 输出警告
