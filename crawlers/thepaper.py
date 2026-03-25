@@ -1,16 +1,17 @@
 """
 澎湃新闻爬虫 - 爬取澎湃热榜 TOP 10
 
-内容提取:
-  澎湃新闻使用 Next.js，文章数据在 <script id="__NEXT_DATA__"> JSON 中：
-    contentDetail.content  — 正文 HTML（含真实图片 URL）
-    contentDetail.imgUrlList — 图片列表
-    contentDetail.videoDetailInfo — 视频信息
-    contentDetail.name — 标题
-    contentDetail.author — 作者
-    contentDetail.pubTime — 发布时间
-  
-  旧选择器 .news_txt 等已失效（澎湃改版后 CSS 类名全变为哈希值）。
+正文获取策略（按优先级）：
+  1. 澎湃新闻内容 API（直接 JSON，最稳定）
+     https://www.thepaper.cn/newsDetail_forward_{contId}?fromH5=true
+     备用: https://api.thepaper.cn/content/article/detail/{contId}
+  2. __NEXT_DATA__ JSON（Next.js 页面内嵌数据）
+     兼容所有已知路径结构（普通/视频/图集/旧版）
+  3. 通用 readability 提取器（兜底）
+
+图片：imgUrlList 列表 + 正文 <img> 标签
+视频：videoDetailInfo 字段，嵌入正文顶部
+作者：author / source 字段
 """
 import re
 import json
@@ -20,14 +21,67 @@ from crawlers.base import BaseCrawler
 
 logger = logging.getLogger(__name__)
 
+# 澎湃新闻内容 API
+_THEPAPER_DETAIL_API = "https://cache.thepaper.cn/contentapi/newsDetail/find"
+_THEPAPER_DETAIL_API2 = "https://api.thepaper.cn/content/article/detail"
+
+
+def _safe_str(val, default="") -> str:
+    if val is None:
+        return default
+    try:
+        return str(val).strip()
+    except Exception:
+        return default
+
+
+def _safe_dict(val) -> dict:
+    return val if isinstance(val, dict) else {}
+
+
+def _safe_list(val) -> list:
+    return val if isinstance(val, list) else []
+
+
+def _extract_thepaper_id(url: str) -> str:
+    """从澎湃新闻 URL 提取文章 ID"""
+    if not url:
+        return ""
+    m = re.search(r'newsDetail_forward_(\d+)', url)
+    if m:
+        return m.group(1)
+    m = re.search(r'/(\d{7,12})(?:[/?#]|$)', url)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _build_video_tag(vid_url: str, poster: str, vtype: str) -> str:
+    """构建视频 HTML 标签"""
+    if not vid_url:
+        return ""
+    poster_attr = f' poster="{poster}"' if poster else ""
+    if vtype == "m3u8":
+        return (
+            f'<video controls preload="metadata" playsinline '
+            f'data-hls-src="{vid_url}"{poster_attr} '
+            f'style="width:100%;border-radius:8px;margin-bottom:16px;background:#000;">'
+            f'您的浏览器不支持视频播放</video>'
+        )
+    return (
+        f'<video controls preload="metadata"{poster_attr} '
+        f'style="width:100%;border-radius:8px;margin-bottom:16px;background:#000;">'
+        f'<source src="{vid_url}" type="video/mp4">'
+        f'您的浏览器不支持视频播放</video>'
+    )
+
 
 class ThePaperCrawler(BaseCrawler):
 
     detail_selectors = [
-        ".cententWrap__UojXm",  # 新版（哈希类名，可能变）
-        "[class*='cententWrap']",  # 模糊匹配
-        ".news_txt",            # 旧版回退
-        "article",
+        ".cententWrap", "[class*='cententWrap']",
+        ".news_txt", "article",
+        "[class*='article']", "[class*='content']",
     ]
 
     def __init__(self):
@@ -45,85 +99,159 @@ class ThePaperCrawler(BaseCrawler):
         results = []
 
         # 澎湃热榜 API
-        api_url = f"{self.base_url}/api/feed/hotspot/list"
-        resp = self._request(api_url, params={"pageSize": 10, "pageNum": 1})
+        resp = self._request(
+            f"{self.base_url}/api/feed/hotspot/list",
+            params={"pageSize": 10, "pageNum": 1}
+        )
         if resp:
             try:
                 data = resp.json()
-                items = data.get("data", {}).get("list", data.get("data", []))
-                if isinstance(items, list):
-                    for i, item in enumerate(items[:10], 1):
-                        title = item.get("title", item.get("name", "")).strip()
-                        cid = item.get("contId", item.get("id", ""))
-                        url = item.get("url", "")
-                        if not url and cid:
-                            url = f"{self.base_url}/newsDetail_forward_{cid}"
-                        if title and url:
-                            results.append(self._make_item(
-                                title=title, url=str(url).strip(), rank=i,
-                                summary=item.get("summary", ""),
-                                category="热榜",
-                            ))
-                    if results:
-                        return results
+                items_raw = data.get("data", {})
+                if isinstance(items_raw, dict):
+                    items_raw = items_raw.get("list", [])
+                items = _safe_list(items_raw)
+                for i, item in enumerate(items[:10], 1):
+                    if not isinstance(item, dict):
+                        continue
+                    title = _safe_str(item.get("title") or item.get("name"))
+                    cid = _safe_str(item.get("contId") or item.get("id"))
+                    url = _safe_str(item.get("url"))
+                    if not url and cid:
+                        url = f"{self.base_url}/newsDetail_forward_{cid}"
+                    if title and url:
+                        results.append(self._make_item(
+                            title=title, url=url, rank=i,
+                            summary=_safe_str(item.get("summary")),
+                            category="热榜",
+                        ))
+                if results:
+                    return results
             except Exception as e:
                 self.logger.warning(f"[thepaper] 热榜 API 失败: {e}")
 
-        # 备选: 首页
+        # 备选：首页 HTML
         resp = self._request(self.base_url)
         if resp is None:
             return results
-        resp.encoding = "utf-8"
-        soup = BeautifulSoup(resp.text, "lxml")
-        rank = 1
-        seen = set()
-        for a in soup.find_all("a", href=True):
-            href = str(a["href"]).strip()
-            title = a.get_text(strip=True)
-            if "newsDetail_forward_" not in href:
-                continue
-            if not title or len(title) < 8:
-                continue
-            if href.startswith("/"):
-                href = self.base_url + href
-            if href in seen:
-                continue
-            seen.add(href)
-            results.append(self._make_item(
-                title=title, url=href, rank=rank, category="热榜"
-            ))
-            rank += 1
-            if rank > 10:
-                break
+        try:
+            resp.encoding = "utf-8"
+            soup = BeautifulSoup(resp.text, "lxml")
+            rank = 1
+            seen = set()
+            for a in soup.find_all("a", href=True):
+                href = _safe_str(a.get("href"))
+                title = a.get_text(strip=True)
+                if "newsDetail_forward_" not in href:
+                    continue
+                if not title or len(title) < 8:
+                    continue
+                if href.startswith("/"):
+                    href = self.base_url + href
+                if href in seen:
+                    continue
+                seen.add(href)
+                results.append(self._make_item(
+                    title=title, url=href, rank=rank, category="热榜"
+                ))
+                rank += 1
+                if rank > 10:
+                    break
+        except Exception as e:
+            self.logger.warning(f"[thepaper] 首页解析失败: {e}")
 
         return results
 
     # ================================================================
-    #  详情页解析（从 __NEXT_DATA__ 提取）
+    #  详情页：多策略提取完整正文
     # ================================================================
 
+    def fetch_detail(self, item: dict) -> dict:
+        """
+        澎湃新闻详情页抓取。
+        策略1：内容 API（最稳定，直接返回 JSON）
+        策略2：页面 HTML 中的 __NEXT_DATA__
+        策略3：readability 兜底
+        """
+        if not isinstance(item, dict):
+            return {}
+        url = _safe_str(item.get("url"))
+        if not url:
+            return {}
+
+        from config import DETAIL_FETCH_TIMEOUT
+
+        # 策略1：内容 API
+        article_id = _extract_thepaper_id(url)
+        if article_id:
+            result = self._fetch_via_api(article_id, url, DETAIL_FETCH_TIMEOUT)
+            if result and len(_safe_str(result.get("content"))) > 100:
+                self.logger.info(f"[thepaper] API 提取成功: {url[:60]}")
+                return result
+
+        # 策略2 & 3：HTML
+        try:
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            if resp is not None:
+                return self.parse_detail(resp.text, url)
+        except Exception as e:
+            self.logger.warning(f"[thepaper] 详情页抓取失败: {url[:60]} | {e}")
+
+        return {}
+
+    def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
+        """通过澎湃新闻内容 API 获取完整文章"""
+        apis = [
+            (_THEPAPER_DETAIL_API, {"contid": article_id}),
+            (_THEPAPER_DETAIL_API2, {"id": article_id}),
+        ]
+        for api_url, params in apis:
+            try:
+                resp = self._request(api_url, params=params,
+                                     timeout=timeout, skip_cffi=True)
+                if resp is None:
+                    continue
+                data = resp.json()
+                if not isinstance(data, dict):
+                    continue
+                # 尝试多种 API 返回结构
+                detail = (
+                    _safe_dict(data.get("data", {}).get("contentDetail"))
+                    or _safe_dict(data.get("newsInfo"))
+                    or _safe_dict(data.get("data"))
+                    or _safe_dict(data.get("content"))
+                )
+                if not detail:
+                    # 顶层直接是文章数据
+                    if data.get("content") or data.get("name"):
+                        detail = data
+                if detail:
+                    result = self._parse_detail_dict(detail, url)
+                    if len(_safe_str(result.get("content"))) > 100:
+                        return result
+            except Exception as e:
+                self.logger.debug(f"[thepaper] API {api_url} 失败: {e}")
+                continue
+        return {}
+
     def parse_detail(self, html: str, url: str) -> dict:
-        """
-        优先从 __NEXT_DATA__ JSON 提取完整内容，
-        回退到通用提取器。
-        """
-        # 方案 1: __NEXT_DATA__
+        """从 HTML 提取正文：__NEXT_DATA__ 优先，readability 兜底"""
+        if not html or not isinstance(html, str):
+            from utils.content_extractor import extract_content
+            return extract_content("", url, selectors=self.detail_selectors)
+
+        # 方案1: __NEXT_DATA__
         result = self._extract_from_next_data(html, url)
-        if result and result.get("content") and len(result["content"]) > 50:
+        if result and len(_safe_str(result.get("content"))) > 50:
             return result
 
-        # 方案 2: 通用提取器
+        # 方案2: 通用提取器
         from utils.content_extractor import extract_content
         return extract_content(html, url, selectors=self.detail_selectors)
 
     def _extract_from_next_data(self, html: str, url: str) -> dict:
         """
         从 __NEXT_DATA__ 中提取文章数据。
-        澎湃新闻页面结构随时间变化，支持多种路径兼容：
-          路径1: props.pageProps.detailData.contentDetail（主流）
-          路径2: props.pageProps.newsDetail（部分文章类型）
-          路径3: props.pageProps.detail（视频/图集类型）
-          路径4: props.initialProps.pageProps.*（旧版结构）
+        兼容澎湃所有已知页面结构（递归深度搜索 contentDetail）。
         """
         try:
             soup = BeautifulSoup(html, "lxml")
@@ -131,116 +259,208 @@ class ThePaperCrawler(BaseCrawler):
             if not script or not script.string:
                 return {}
 
-            data = json.loads(script.string)
-            props = data.get("props", {})
-            page_props = props.get("pageProps", props.get("initialProps", {}).get("pageProps", {}))
+            data = json.loads(_safe_str(script.string))
+            if not isinstance(data, dict):
+                return {}
 
-            # 尝试多条路径获取 contentDetail
-            detail = (
-                page_props.get("detailData", {}).get("contentDetail")
-                or page_props.get("newsDetail")
-                or page_props.get("detail")
-                or page_props.get("contentDetail")
-                or page_props.get("data", {}).get("contentDetail")
-                or page_props.get("data", {}).get("detail")
+            props = _safe_dict(data.get("props"))
+            # 兼容 pageProps 和 initialProps
+            page_props = _safe_dict(
+                props.get("pageProps")
+                or _safe_dict(props.get("initialProps")).get("pageProps")
             )
+
+            # 递归搜索 contentDetail 或 detail 或 newsDetail
+            detail = self._find_detail_in_props(page_props)
+
+            if not detail or not isinstance(detail, dict):
+                # 深度递归整个 props 树兜底
+                detail = self._deep_find_detail(props)
 
             if not detail or not isinstance(detail, dict):
                 return {}
 
-            # 标题
-            title = detail.get("name", "")
+            return self._parse_detail_dict(detail, url)
 
-            # 作者
-            author = detail.get("author", "")
+        except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as e:
+            logger.debug(f"[thepaper] __NEXT_DATA__ 解析失败: {url[:50]} | {e}")
+            return {}
 
-            # 发布时间
-            pub_time = detail.get("pubTime", detail.get("publishTime", ""))
+    @staticmethod
+    def _find_detail_in_props(page_props: dict) -> dict:
+        """
+        在 pageProps 中按已知路径查找 contentDetail 字典。
+        覆盖所有已知澎湃页面类型。
+        """
+        if not isinstance(page_props, dict):
+            return {}
 
-            # 正文 HTML（content 字段直接包含完整的 <p><img> 标签）
-            content_html = detail.get("content", detail.get("contTxt", ""))
+        # 路径列表（按概率从高到低排列）
+        candidates = [
+            # 普通文章（最常见）
+            lambda p: _safe_dict(p.get("detailData", {})).get("contentDetail"),
+            # 视频文章
+            lambda p: p.get("detail"),
+            # 图集文章
+            lambda p: p.get("newsDetail"),
+            # 直接在 pageProps
+            lambda p: p.get("contentDetail"),
+            # data 子层
+            lambda p: _safe_dict(p.get("data", {})).get("contentDetail"),
+            lambda p: _safe_dict(p.get("data", {})).get("detail"),
+            lambda p: _safe_dict(p.get("data", {})).get("newsDetail"),
+            # detailData 直接是文章
+            lambda p: p.get("detailData"),
+            # 其他嵌套
+            lambda p: _safe_dict(p.get("initialData", {})).get("contentDetail"),
+            lambda p: _safe_dict(p.get("serverData", {})).get("contentDetail"),
+        ]
 
-            # 从正文 HTML 提取纯文本
-            content = ""
-            if content_html:
-                content_soup = BeautifulSoup(content_html, "lxml")
-                content = content_soup.get_text(separator="\n")
-                content = re.sub(r"\n\s*\n", "\n\n", content).strip()
+        for path_fn in candidates:
+            try:
+                val = path_fn(page_props)
+                if isinstance(val, dict) and val:
+                    # 验证是否是文章数据（有 content 或 name 字段）
+                    if val.get("content") or val.get("name") or val.get("contTxt"):
+                        return val
+            except Exception:
+                continue
+        return {}
 
-            # 图片（从 imgUrlList + 正文中的 <img> 提取）
-            images = []
-            seen_urls = set()
+    @staticmethod
+    def _deep_find_detail(data: dict, depth: int = 0) -> dict:
+        """
+        深度递归搜索包含 content 且是文章数据的字典。
+        用于处理未知的新 pageProps 结构。
+        """
+        if depth > 6 or not isinstance(data, dict):
+            return {}
+        # 判断当前节点是否是文章数据
+        if (data.get("content") or data.get("contTxt")) and data.get("name"):
+            return data
+        # 递归子节点
+        for key, val in data.items():
+            if isinstance(val, dict):
+                found = ThePaperCrawler._deep_find_detail(val, depth + 1)
+                if found:
+                    return found
+        return {}
 
-            # 来源 1: imgUrlList
-            for img_data in detail.get("imgUrlList", []):
-                img_url = img_data.get("url", img_data.get("src", ""))
-                desc = img_data.get("description", img_data.get("desc", ""))
-                if img_url and img_url not in seen_urls:
-                    seen_urls.add(img_url)
-                    images.append({"url": img_url, "caption": desc})
+    def _parse_detail_dict(self, detail: dict, url: str) -> dict:
+        """
+        从 contentDetail 字典（无论来自 API 还是 __NEXT_DATA__）提取完整数据。
+        """
+        result = {
+            "content_html": "", "content": "", "images": [],
+            "videos": [], "thumbnail": "", "author": "", "pub_time": "",
+        }
+        if not isinstance(detail, dict):
+            return result
 
-            # 来源 2: 正文中的 <img> 标签
-            if content_html:
+        # 正文 HTML
+        content_html = _safe_str(detail.get("content") or detail.get("contTxt"))
+
+        # 图片列表
+        images = []
+        seen_urls = set()
+
+        # 来源1：imgUrlList
+        for img_data in _safe_list(detail.get("imgUrlList")):
+            if isinstance(img_data, dict):
+                img_url = _safe_str(img_data.get("url") or img_data.get("src"))
+                desc = _safe_str(img_data.get("description") or img_data.get("desc"))
+            elif isinstance(img_data, str):
+                img_url = img_data
+                desc = ""
+            else:
+                continue
+            if img_url and img_url not in seen_urls and not img_url.startswith("data:"):
+                seen_urls.add(img_url)
+                images.append({"url": img_url, "caption": desc})
+
+        # 来源2：正文中的 <img>
+        if content_html:
+            try:
                 for img in BeautifulSoup(content_html, "lxml").find_all("img"):
-                    src = img.get("src", img.get("data-src", ""))
+                    src = _safe_str(img.get("src") or img.get("data-src"))
                     if src and src not in seen_urls and not src.startswith("data:"):
                         seen_urls.add(src)
-                        images.append({"url": src, "caption": img.get("alt", "")})
+                        images.append({
+                            "url": src,
+                            "caption": _safe_str(img.get("alt")),
+                            "in_content": True,
+                        })
+            except Exception:
+                pass
 
-            # 缩略图
-            thumbnail = detail.get("picUrl", "")
-            if not thumbnail and images:
-                thumbnail = images[0]["url"]
-
-            # 视频
-            videos = []
-            video_info = detail.get("videoDetailInfo", {})
-            if isinstance(video_info, dict) and video_info:
-                vid_url = video_info.get("playUrl", video_info.get("url", ""))
-                poster = video_info.get("coverUrl", "")
-                if vid_url:
-                    vtype = "m3u8" if ".m3u8" in vid_url else "mp4"
-                    videos.append({
-                        "url": vid_url, "type": vtype,
-                        "poster": poster, "in_content": True,
-                    })
-                    # 将视频嵌入正文顶部
-                    if vtype == "m3u8":
-                        vid_tag = (
-                            f'<video controls preload="metadata" playsinline '
-                            f'data-hls-src="{vid_url}" '
-                            f'poster="{poster}" '
-                            f'style="width:100%;border-radius:8px;margin-bottom:16px;background:#000;">'
-                            f'您的浏览器不支持视频播放</video>'
-                        )
-                    else:
-                        vid_tag = (
-                            f'<video controls preload="metadata" '
-                            f'poster="{poster}" '
-                            f'style="width:100%;border-radius:8px;margin-bottom:16px;background:#000;">'
-                            f'<source src="{vid_url}" type="video/mp4">'
-                            f'您的浏览器不支持视频播放</video>'
-                        )
+        # 视频处理
+        videos = []
+        video_info = _safe_dict(detail.get("videoDetailInfo"))
+        if video_info:
+            vid_url = _safe_str(video_info.get("playUrl") or video_info.get("url"))
+            poster = _safe_str(video_info.get("coverUrl") or video_info.get("thumbnail"))
+            if vid_url:
+                vtype = "m3u8" if ".m3u8" in vid_url else "mp4"
+                videos.append({
+                    "url": vid_url, "type": vtype,
+                    "poster": poster, "in_content": True,
+                })
+                # 视频嵌入正文顶部
+                vid_tag = _build_video_tag(vid_url, poster, vtype)
+                if vid_tag:
                     content_html = vid_tag + "\n" + content_html
 
-            # 消毒 HTML
+        # 多图集处理（图集类型文章没有 content，图片就是内容）
+        if not content_html and images:
+            img_tags = []
+            for img in images:
+                cap = img.get("caption", "")
+                img_tags.append(
+                    f'<figure><img src="{img["url"]}" alt="{cap}"/>'
+                    f'{"<figcaption>" + cap + "</figcaption>" if cap else ""}'
+                    f'</figure>'
+                )
+                img["in_content"] = True
+            content_html = "\n".join(img_tags)
+
+        # 消毒 HTML
+        if content_html:
             try:
                 from utils.content_extractor import sanitize_html
                 content_html = sanitize_html(content_html)
-            except ImportError:
+            except Exception:
                 pass
+            result["content_html"] = content_html
+            # 提取纯文本
+            try:
+                csoup = BeautifulSoup(content_html, "lxml")
+                result["content"] = re.sub(
+                    r"\n\s*\n", "\n\n", csoup.get_text(separator="\n")
+                ).strip()
+            except Exception:
+                result["content"] = ""
 
-            return {
-                "title": title,
-                "content": content,
-                "content_html": content_html,
-                "images": images[:20],
-                "videos": videos,
-                "thumbnail": thumbnail,
-                "author": author,
-                "pub_time": pub_time,
-            }
+        result["images"] = images[:20]
+        result["videos"] = videos
 
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.debug(f"[thepaper] __NEXT_DATA__ 解析失败: {url[:50]} | {e}")
-            return {}
+        # 缩略图
+        thumbnail = _safe_str(detail.get("picUrl") or detail.get("thumbnail"))
+        if not thumbnail and images:
+            thumbnail = images[0]["url"]
+        result["thumbnail"] = thumbnail
+
+        # 作者
+        author = detail.get("author") or detail.get("source") or ""
+        if isinstance(author, dict):
+            author = author.get("name", "") or author.get("nickname", "")
+        result["author"] = _safe_str(author)
+
+        # 发布时间
+        result["pub_time"] = _safe_str(
+            detail.get("pubTime") or detail.get("publishTime")
+            or detail.get("interactionNum", {}).get("time") if isinstance(
+                detail.get("interactionNum"), dict) else ""
+            or detail.get("pubTime")
+        )
+
+        return result

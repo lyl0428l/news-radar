@@ -362,16 +362,20 @@ class BaseCrawler(ABC):
         返回 {"content", "content_html", "images", "videos", "thumbnail"}。
         子类可重写此方法实现自定义逻辑。
         """
-        url = item.get("url", "")
-        if not url:
+        if not isinstance(item, dict):
+            return {}
+        url = item.get("url", "") or ""
+        if not url or not isinstance(url, str):
             return {}
         try:
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is None:
                 return {}
-            return self.parse_detail(resp.text, url)
+            html = resp.text if resp.text else ""
+            result = self.parse_detail(html, url)
+            return result if isinstance(result, dict) else {}
         except Exception as e:
-            self.logger.debug(f"[{self.name}] 详情页抓取失败: {url} | {e}")
+            self.logger.warning(f"[{self.name}] 详情页抓取失败: {url[:60]} | {e}")
             return {}
 
     def parse_detail(self, html: str, url: str) -> dict:
@@ -403,31 +407,68 @@ class BaseCrawler(ABC):
         items_skipped = [item for item in items if item.get("url", "") in skip_urls]
 
         def _fetch_one(item):
-            detail = self.fetch_detail(item)
-            if detail:
-                # 正文：详情页正文比现有内容更长时才替换（解决短摘要不被完整正文覆盖的BUG）
-                existing_content = item.get("content", "")
-                new_content = detail.get("content", "")
-                if new_content and len(new_content) > len(existing_content):
-                    item["content"] = new_content
-                if detail.get("content_html"):
-                    item["content_html"] = detail["content_html"]
-                if detail.get("images"):
-                    item["images"] = detail["images"]
-                if detail.get("videos"):
-                    item["videos"] = detail["videos"]
-                if detail.get("thumbnail") and not item.get("thumbnail"):
-                    item["thumbnail"] = detail["thumbnail"]
-                if detail.get("author") and not item.get("author"):
-                    item["author"] = detail["author"]
-                if detail.get("pub_time") and not item.get("pub_time"):
-                    # 用 base.py 的 parse_time 统一格式化
-                    parsed = self.parse_time(detail["pub_time"])
+            if not isinstance(item, dict):
+                return item
+            try:
+                detail = self.fetch_detail(item)
+            except Exception as e:
+                self.logger.warning(f"[{self.name}] fetch_detail 异常: "
+                                    f"{item.get('url', '')[:60]} | {e}")
+                detail = {}
+
+            if not isinstance(detail, dict) or not detail:
+                return item
+
+            # 正文：详情页正文比现有内容更长时才替换
+            existing_content = item.get("content") or ""
+            new_content = detail.get("content") or ""
+            if isinstance(new_content, str) and len(new_content) > len(existing_content):
+                item["content"] = new_content
+
+            # content_html：有值就覆盖（详情页 HTML 优先级高于列表页）
+            new_html = detail.get("content_html") or ""
+            if isinstance(new_html, str) and new_html.strip():
+                item["content_html"] = new_html
+
+            # 图片：以详情页为准（更完整）
+            new_images = detail.get("images")
+            if isinstance(new_images, list) and new_images:
+                item["images"] = new_images
+
+            # 视频
+            new_videos = detail.get("videos")
+            if isinstance(new_videos, list) and new_videos:
+                item["videos"] = new_videos
+
+            # 封面图：只在原来没有时填充
+            new_thumb = detail.get("thumbnail") or ""
+            if isinstance(new_thumb, str) and new_thumb and not item.get("thumbnail"):
+                item["thumbnail"] = new_thumb
+
+            # 作者：只在原来没有时填充
+            new_author = detail.get("author") or ""
+            if isinstance(new_author, str) and new_author and not item.get("author"):
+                item["author"] = new_author
+
+            # 发布时间：只在原来没有时填充，并统一格式化
+            new_pub = detail.get("pub_time") or ""
+            if isinstance(new_pub, str) and new_pub and not item.get("pub_time"):
+                try:
+                    parsed = self.parse_time(new_pub)
                     if parsed:
                         item["pub_time"] = parsed
-                # 如果没有摘要但有正文，自动生成摘要
-                if not item.get("summary") and detail.get("content"):
-                    item["summary"] = self.extract_summary(detail["content"])
+                except Exception:
+                    item["pub_time"] = new_pub
+
+            # 摘要：没有摘要时从正文自动生成
+            if not item.get("summary"):
+                content_for_summary = item.get("content") or ""
+                if isinstance(content_for_summary, str) and content_for_summary:
+                    try:
+                        item["summary"] = self.extract_summary(content_for_summary)
+                    except Exception:
+                        pass
+
             return item
 
         results = list(items_skipped)  # 已跳过的保持原样
@@ -437,13 +478,15 @@ class BaseCrawler(ABC):
                 futures = {pool.submit(_fetch_one, item): item for item in items_to_fetch}
                 for future in as_completed(futures):
                     try:
-                        results.append(future.result())
+                        r = future.result()
+                        results.append(r if isinstance(r, dict) else futures[future])
                     except Exception as e:
-                        self.logger.debug(f"[{self.name}] 详情页线程异常: {e}")
+                        self.logger.warning(f"[{self.name}] 详情页线程异常: {e}")
                         results.append(futures[future])
 
-        # 保持原始排序（按 rank）
-        results.sort(key=lambda x: x.get("rank", 999))
+        # 保持原始排序（按 rank），过滤非 dict 的异常条目
+        results = [r for r in results if isinstance(r, dict)]
+        results.sort(key=lambda x: x.get("rank", 999) if isinstance(x, dict) else 999)
         return results
 
     # ========== 核心接口 ==========
