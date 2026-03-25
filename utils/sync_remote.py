@@ -99,7 +99,7 @@ def sync_to_remote(news_list: list, server_url: str, api_token: str = "",
 
     参数：
         news_list:     新闻列表
-        server_url:    服务器地址，如 "http://8.162.9.143"
+        server_url:    服务器地址，如 "http://1.2.3.4"
         api_token:     （已废弃，保留兼容）
         username:      后端登录用户名
         password:      后端登录密码

@@ -26,8 +26,12 @@ nul
 Thumbs.db
 .DS_Store
 
-# Secrets
+# Secrets — 所有敏感文件绝不打入镜像
 .env
+.env.*
+*.pem
+*.key
+deploy_upload.py
 
 # Service working copy
 news_crawler/
@@ -47,6 +51,7 @@ docker-compose*.yml
 
 # Docs
 README.md
+docs/
 
 # Windows scripts (容器内用不到)
 *.bat

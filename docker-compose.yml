@@ -31,6 +31,7 @@ services:
       - SYNC_SERVER_URL=${SYNC_SERVER_URL:-}
       - SYNC_USERNAME=${SYNC_USERNAME:-}
       - SYNC_PASSWORD=${SYNC_PASSWORD:-}
+      - SERVER_API_TOKEN=${SERVER_API_TOKEN:-}     # server_receiver 鉴权 Token
     env_file:
       - path: .env
         required: false                            # .env 不存在时不报错（使用上方默认值）
@@ -60,6 +61,7 @@ services:
       - crawler-logs:/app/logs
     environment:
       - TZ=${TZ:-Asia/Shanghai}
+      - SERVER_API_TOKEN=${SERVER_API_TOKEN:-}     # server_receiver 鉴权 Token（如果同容器运行接收器时使用）
     env_file:
       - path: .env
         required: false

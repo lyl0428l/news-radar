@@ -23,9 +23,11 @@ from flask import Flask, request, jsonify
 # ============ 配置 ============
 DB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 DB_PATH = os.path.join(DB_DIR, "news.db")
-API_PORT = 5000                    # 容器内端口（宿主机映射到8888）
-API_TOKEN = "news-radar-2026"      # 推送鉴权Token（防止别人乱推数据）
-LOG_LEVEL = "INFO"
+API_PORT = int(os.environ.get("API_PORT", "5000"))  # 容器内端口（宿主机映射到8888）
+# 推送鉴权Token — 必须通过环境变量 SERVER_API_TOKEN 设置，不要写死在代码中
+# 生成建议：python -c "import secrets; print(secrets.token_hex(32))"
+API_TOKEN = os.environ.get("SERVER_API_TOKEN", "")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
 # ============ 日志 ============
 logging.basicConfig(
@@ -213,9 +215,11 @@ def index():
 @app.route("/api/push", methods=["POST"])
 def api_push():
     """接收本地推送的新闻数据"""
-    # 鉴权
+    # 鉴权（Token 未配置时拒绝所有请求，防止裸奔）
+    if not API_TOKEN:
+        return jsonify({"ok": False, "msg": "服务端未配置 API Token，拒绝服务"}), 503
     token = request.headers.get("X-API-Token", "")
-    if token != API_TOKEN:
+    if not token or token != API_TOKEN:
         return jsonify({"ok": False, "msg": "鉴权失败：Token错误"}), 403
 
     data = request.get_json(silent=True)
@@ -340,6 +344,13 @@ def api_health():
 
 # ============ 启动 ============
 if __name__ == "__main__":
+    # 启动前强制检查 API Token
+    if not API_TOKEN:
+        print("错误: 未设置 SERVER_API_TOKEN 环境变量")
+        print("  生成随机 Token: python -c \"import secrets; print(secrets.token_hex(32))\"")
+        print("  然后在 .env 中添加: SERVER_API_TOKEN=生成的Token")
+        sys.exit(1)
+
     init_db()
     # 使用waitress生产级服务器
     try:

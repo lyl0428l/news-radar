@@ -27,7 +27,7 @@ CRAWL_INTERVAL_HOURS = 1          # 爬取间隔（小时）
 CRAWL_TIMEOUT = 15                # 单次请求超时（秒）
 CRAWL_RETRY = 2                   # 失败重试次数
 CRAWL_DELAY = (1, 3)              # 请求间隔随机范围（秒）
-MAX_WORKERS = 8                   # 并发线程数（15 站点分 2 批即可完成）
+MAX_WORKERS = 5                   # 并发线程数（2GB内存服务器，限制峰值线程）
 
 # ============ User-Agent 池 ============
 USER_AGENTS = [
@@ -71,8 +71,7 @@ SITES: list[SiteConfig] = [
 # ============ Web 服务配置 ============
 # WEB_HOST = "127.0.0.1"  # 只允许本机访问
 WEB_HOST = "0.0.0.0"      # 允许外网访问（部署到阿里云时使用）
-WEB_PORT = 5000            # 容器内监听端口（docker-compose.yml 将宿主机 8888 映射到此端口）
-                           # 本地直接运行时访问 http://127.0.0.1:5000
+WEB_PORT = 8888            # Web 服务监听端口，浏览器访问 http://服务器IP:8888
 WEB_DEBUG = False
 
 # ============ 媒体配置 ============
@@ -83,17 +82,16 @@ MEDIA_MIN_IMAGE_SIZE = 100        # 最小图片尺寸（像素），过滤 logo
 MEDIA_IMAGE_MAX_WIDTH = 1200      # 下载图片最大宽度，超过则压缩
 MEDIA_DOWNLOAD_TIMEOUT = 10       # 图片下载超时（秒）
 DETAIL_FETCH_TIMEOUT = 12         # 详情页抓取超时（秒）
-DETAIL_MAX_WORKERS = 3            # 详情页并发抓取线程数（原为5，降低以减少嵌套线程池内存开销）
-                                  # MAX_WORKERS=8 × DETAIL_MAX_WORKERS=3 = 最多24个详情页线程
-                                  # 原配置 8×5=40 线程，峰值内存可节省约 40%
+DETAIL_MAX_WORKERS = 2            # 详情页并发抓取线程数（2GB内存服务器）
+                                  # MAX_WORKERS=5 × DETAIL_MAX_WORKERS=2 = 最多10个详情页线程
 
 # ============ 数据保留 ============
-DATA_RETAIN_DAYS = 30             # JSON 文件保留天数
+DATA_RETAIN_DAYS = 2              # JSON 文件保留天数
 
 # ============ 微信推送配置（PushPlus） ============
 # 获取 Token：访问 https://www.pushplus.plus 微信扫码登录后复制 Token
 PUSH_ENABLED = _env("PUSH_ENABLED", "true").lower() == "true"
-PUSH_TOKEN = _env("PUSH_TOKEN", "")        # 必须通过环境变量设置
+PUSH_TOKEN = _env("PUSH_TOKEN", "")  # 必须通过 .env 或环境变量设置，不要在代码中写真实 Token
 PUSH_TOPIC = _env("PUSH_TOPIC", "")        # 群组编码（留空=只推给自己）
 
 # 每轮爬取汇总推送
@@ -122,7 +120,7 @@ PUSH_BREAKING_KEYWORDS = [
 
 # ============ 远程同步配置 ============
 SYNC_ENABLED = _env("SYNC_ENABLED", "false").lower() == "true"  # 默认关闭，需显式开启
-SYNC_SERVER_URL = _env("SYNC_SERVER_URL", "")          # 远程服务器地址，如 http://8.162.9.143
+SYNC_SERVER_URL = _env("SYNC_SERVER_URL", "")          # 远程服务器地址，如 http://1.2.3.4
 SYNC_USERNAME = _env("SYNC_USERNAME", "")              # 后端登录用户名
 SYNC_PASSWORD = _env("SYNC_PASSWORD", "")              # 后端登录密码
 SYNC_API_TOKEN = ""                                    # （已废弃，保留兼容）

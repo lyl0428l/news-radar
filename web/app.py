@@ -508,12 +508,28 @@ def _rewrite_content_images(item: dict) -> dict:
 
 @app.route("/media/<path:filename>")
 def serve_media(filename):
-    """提供本地媒体文件访问"""
+    """提供本地媒体文件访问（严格路径遍历防护）"""
     from flask import send_from_directory, abort
-    # 安全检查：只允许访问 media 目录下的文件
-    if ".." in filename:
+    import posixpath
+
+    # 规范化路径（消除 .、..、URL 编码的 %2e%2e 等）
+    safe_name = posixpath.normpath("/" + filename).lstrip("/")
+
+    # 绝对路径或空路径 → 拒绝
+    if not safe_name or safe_name.startswith("/"):
         abort(403)
-    return send_from_directory(MEDIA_DIR, filename)
+
+    # 双重检查：只允许访问以 images/ 开头的文件（媒体目录结构固定）
+    if not safe_name.startswith("images/"):
+        abort(403)
+
+    # 确保最终路径在 MEDIA_DIR 内（防止符号链接逃逸）
+    abs_path = os.path.realpath(os.path.join(MEDIA_DIR, safe_name))
+    media_root = os.path.realpath(MEDIA_DIR)
+    if not abs_path.startswith(media_root + os.sep) and abs_path != media_root:
+        abort(403)
+
+    return send_from_directory(MEDIA_DIR, safe_name)
 
 
 @app.route("/api/export")

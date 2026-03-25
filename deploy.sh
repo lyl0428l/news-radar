@@ -222,8 +222,11 @@ else
     log_warn "Web 服务可能还在启动中，请稍后检查"
 fi
 
-# 获取服务器外网IP
-SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || echo "8.162.9.143")
+# 获取服务器外网IP（不要硬编码 IP 地址作为 fallback）
+SERVER_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null \
+    || curl -s --max-time 5 api.ipify.org 2>/dev/null \
+    || hostname -I 2>/dev/null | awk '{print $1}' \
+    || echo "YOUR_SERVER_IP")
 
 # ============================================
 # 部署完成！

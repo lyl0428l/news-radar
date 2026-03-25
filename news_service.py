@@ -159,6 +159,11 @@ class NewsCrawlerService(win32serviceutil.ServiceFramework):
     def _run_web(self):
         """在独立线程中运行 Flask Web 服务（使用 waitress 生产级 WSGI 服务器）"""
         try:
+            # 确保工作目录和模块路径正确（Windows 服务启动时 cwd 为 System32）
+            os.chdir(SERVICE_DIR)
+            if SERVICE_DIR not in sys.path:
+                sys.path.insert(0, SERVICE_DIR)
+
             from web.app import app
             from config import WEB_HOST, WEB_PORT
             from waitress import serve
