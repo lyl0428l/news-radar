@@ -25,11 +25,43 @@ LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cr
 _lock_handle = None
 
 
+def _is_pid_alive(pid: int) -> bool:
+    """检查指定 PID 的进程是否仍在运行"""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            return False
+        else:
+            # Unix: 发送信号 0 检测进程是否存在
+            os.kill(pid, 0)
+            return True
+    except (OSError, PermissionError):
+        return False
+
+
+def _read_lock_pid() -> int:
+    """读取锁文件中的 PID，失败返回 0"""
+    try:
+        with open(LOCK_FILE, "r") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return 0
+
+
 def acquire_lock() -> bool:
     """
     尝试获取文件锁，防止重复启动。
     利用 Windows 的文件独占锁：进程存活时锁住文件，
     进程退出（包括崩溃）后系统自动释放，不会误判。
+
+    额外保护：锁定失败时检查锁文件中的 PID 是否真实存活，
+    若进程已不存在（如被 kill -9 强杀后锁文件残留），
+    则清除锁文件并重新尝试获取，避免服务器重启后无法启动的问题。
     """
     global _lock_handle
     os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
@@ -41,7 +73,27 @@ def acquire_lock() -> bool:
         _lock_handle.flush()
         return True
     except (OSError, IOError):
-        # 无法锁定 = 另一个实例正在运行
+        # 锁定失败：先检查锁文件中的 PID 是否真的在运行
+        old_pid = _read_lock_pid()
+        if old_pid and not _is_pid_alive(old_pid):
+            # 旧进程已死亡，清除残留锁文件后重试
+            try:
+                if _lock_handle:
+                    _lock_handle.close()
+                    _lock_handle = None
+                os.remove(LOCK_FILE)
+            except OSError:
+                pass
+            # 重新尝试加锁
+            try:
+                import msvcrt
+                _lock_handle = open(LOCK_FILE, "w")
+                msvcrt.locking(_lock_handle.fileno(), msvcrt.LK_NBLCK, 1)
+                _lock_handle.write(str(os.getpid()))
+                _lock_handle.flush()
+                return True
+            except (OSError, IOError):
+                pass
         return False
     except ImportError:
         # 非 Windows 平台，用 fcntl
@@ -52,7 +104,29 @@ def acquire_lock() -> bool:
             _lock_handle.write(str(os.getpid()))
             _lock_handle.flush()
             return True
-        except (OSError, IOError, ImportError):
+        except (OSError, IOError):
+            # fcntl 锁定失败：检查 PID 是否存活
+            old_pid = _read_lock_pid()
+            if old_pid and not _is_pid_alive(old_pid):
+                try:
+                    if _lock_handle:
+                        _lock_handle.close()
+                        _lock_handle = None
+                    os.remove(LOCK_FILE)
+                except OSError:
+                    pass
+                # 重新尝试
+                try:
+                    import fcntl
+                    _lock_handle = open(LOCK_FILE, "w")
+                    fcntl.flock(_lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    _lock_handle.write(str(os.getpid()))
+                    _lock_handle.flush()
+                    return True
+                except (OSError, IOError, ImportError):
+                    pass
+            return False
+        except ImportError:
             return False
 
 

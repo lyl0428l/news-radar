@@ -161,8 +161,8 @@ class BaseCrawler(ABC):
                     delay = random.uniform(*CRAWL_DELAY)
                     time.sleep(delay)
 
-        # 普通请求全部失败后，如果是 401/403 反爬拦截，尝试 curl_cffi 绕过
-        if not skip_cffi and last_status in (401, 403):
+        # 普通请求全部失败后，如果是 401/403/503 反爬拦截，尝试 curl_cffi 绕过
+        if not skip_cffi and last_status in (401, 403, 503):
             cffi_resp = self._request_with_cffi(url, method, caller_headers, **kwargs)
             if cffi_resp is not None:
                 return cffi_resp
@@ -405,9 +405,11 @@ class BaseCrawler(ABC):
         def _fetch_one(item):
             detail = self.fetch_detail(item)
             if detail:
-                # 只更新非空字段（不覆盖列表页已有的数据）
-                if detail.get("content") and not item.get("content"):
-                    item["content"] = detail["content"]
+                # 正文：详情页正文比现有内容更长时才替换（解决短摘要不被完整正文覆盖的BUG）
+                existing_content = item.get("content", "")
+                new_content = detail.get("content", "")
+                if new_content and len(new_content) > len(existing_content):
+                    item["content"] = new_content
                 if detail.get("content_html"):
                     item["content_html"] = detail["content_html"]
                 if detail.get("images"):

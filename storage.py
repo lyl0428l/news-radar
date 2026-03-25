@@ -360,9 +360,10 @@ def _deserialize_row(row) -> dict:
 
 def check_urls_have_content(urls: list) -> set:
     """
-    批量检查哪些 URL 在 DB 中已完整抓取（正文 + 图片 + 作者都有）。
-    返回已完整抓取的 URL 集合。用于优化：跳过详情页抓取。
-    只有正文、图片、作者全部都有的才跳过，否则需要重新抓取补全。
+    批量检查哪些 URL 在 DB 中已有足够正文。
+    返回已有正文的 URL 集合。用于优化：跳过详情页抓取。
+    只要正文长度 > 50 字即认为已抓取完成，不再强制要求图片和作者
+    （原条件过严导致界面新闻等被误判为"未完整"而反复重抓）。
     """
     if not urls:
         return set()
@@ -384,8 +385,6 @@ def check_urls_have_content(urls: list) -> set:
                 WHERE url_hash IN ({placeholders})
                 AND content IS NOT NULL AND content != ''
                 AND length(content) > 50
-                AND images IS NOT NULL AND images != '' AND images != '[]'
-                AND author IS NOT NULL AND author != ''
             """, hash_values)
             found_hashes = {row[0] for row in cursor.fetchall()}
             for h, u in batch:

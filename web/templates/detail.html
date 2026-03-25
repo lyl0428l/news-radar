@@ -396,9 +396,9 @@
             <!-- ===================== Article Content ===================== -->
             <div class="section-header">正文内容</div>
 
-            {% if item.content_html and item.content_html|length > 100 %}
+            {% if item.content_html and item.content_html|length > 20 %}
                 <div class="article-body">{{ item.content_html|safe }}</div>
-            {% elif item.content and item.content|length > 50 %}
+            {% elif item.content and item.content|length > 20 %}
                 <div class="article-body">
                     {% for para in item.content.split('\n\n') %}
                         {% if para.strip() %}

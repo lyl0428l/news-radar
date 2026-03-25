@@ -117,7 +117,14 @@ class ThePaperCrawler(BaseCrawler):
         return extract_content(html, url, selectors=self.detail_selectors)
 
     def _extract_from_next_data(self, html: str, url: str) -> dict:
-        """从 __NEXT_DATA__ 中提取文章数据"""
+        """
+        从 __NEXT_DATA__ 中提取文章数据。
+        澎湃新闻页面结构随时间变化，支持多种路径兼容：
+          路径1: props.pageProps.detailData.contentDetail（主流）
+          路径2: props.pageProps.newsDetail（部分文章类型）
+          路径3: props.pageProps.detail（视频/图集类型）
+          路径4: props.initialProps.pageProps.*（旧版结构）
+        """
         try:
             soup = BeautifulSoup(html, "lxml")
             script = soup.find("script", id="__NEXT_DATA__")
@@ -125,12 +132,20 @@ class ThePaperCrawler(BaseCrawler):
                 return {}
 
             data = json.loads(script.string)
-            detail = (data.get("props", {})
-                      .get("pageProps", {})
-                      .get("detailData", {})
-                      .get("contentDetail", {}))
+            props = data.get("props", {})
+            page_props = props.get("pageProps", props.get("initialProps", {}).get("pageProps", {}))
 
-            if not detail:
+            # 尝试多条路径获取 contentDetail
+            detail = (
+                page_props.get("detailData", {}).get("contentDetail")
+                or page_props.get("newsDetail")
+                or page_props.get("detail")
+                or page_props.get("contentDetail")
+                or page_props.get("data", {}).get("contentDetail")
+                or page_props.get("data", {}).get("detail")
+            )
+
+            if not detail or not isinstance(detail, dict):
                 return {}
 
             # 标题

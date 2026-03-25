@@ -5,6 +5,8 @@
   搜狐文章页的图片 <img data-src> 是 Base64 加密的垃圾值，不是真实 URL。
   真实图片 URL 存储在 JS 变量 `var cfgs = { imgsList: [...] }` 中。
   作者/来源名存储在 `<meta name="mediaid">` 标签中。
+  部分搜狐文章在移动端 m.sohu.com 上有更完整的静态 HTML 正文，
+  PC 端 www.sohu.com 正文容器有时需要 JS 渲染才能完整显示。
   重写 parse_detail() 从这些位置提取数据。
 """
 import re
@@ -18,7 +20,11 @@ logger = logging.getLogger(__name__)
 
 class SohuCrawler(BaseCrawler):
 
-    detail_selectors = [".article", "article.article", "#article-container", "#mp-editor"]
+    detail_selectors = [
+        ".article", "article.article", "#article-container", "#mp-editor",
+        ".article-content", "#articleContent", ".news-content",
+        ".article_content", ".text", ".post-content",
+    ]
 
     def __init__(self):
         super().__init__()
@@ -109,6 +115,36 @@ class SohuCrawler(BaseCrawler):
         return results
 
     # ========== 详情页：从 JS cfgs + meta 标签提取 ==========
+
+    def fetch_detail(self, item: dict) -> dict:
+        """
+        搜狐详情页抓取：优先尝试 PC 端，正文太短时尝试移动端 m.sohu.com。
+        移动端静态 HTML 中正文更完整（PC 端部分文章依赖 JS 渲染）。
+        """
+        url = item.get("url", "")
+        if not url:
+            return {}
+        try:
+            from config import DETAIL_FETCH_TIMEOUT
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            if resp is None:
+                return {}
+            result = self.parse_detail(resp.text, url)
+            # PC 端正文太短时，尝试移动端
+            if not result.get("content") or len(result.get("content", "")) < 100:
+                mobile_url = url.replace("www.sohu.com", "m.sohu.com")
+                if mobile_url != url:
+                    m_resp = self._request(mobile_url, timeout=DETAIL_FETCH_TIMEOUT)
+                    if m_resp:
+                        m_result = self.parse_detail(m_resp.text, mobile_url)
+                        # 移动端正文更长则采用移动端结果
+                        if len(m_result.get("content", "")) > len(result.get("content", "")):
+                            self.logger.info(f"[sohu] 移动端正文更完整，使用 m.sohu.com: {url[:60]}")
+                            return m_result
+            return result
+        except Exception as e:
+            self.logger.debug(f"[sohu] 详情页抓取失败: {url} | {e}")
+            return {}
 
     def parse_detail(self, html: str, url: str) -> dict:
         """

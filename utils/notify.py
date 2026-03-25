@@ -55,6 +55,33 @@ def _send(token: str, title: str, content: str,
         return False
 
 
+def _sanitize_push_html(html: str) -> str:
+    """
+    清理推送 HTML，移除 PushPlus 服务端不接受的属性，防止"服务端验证错误"。
+    主要问题：data-* 属性、onerror/onload 等事件属性、data-hls-src 等自定义属性。
+    """
+    import re
+    # 移除所有 data-* 属性（PushPlus 服务端会拒绝含大量 data- 属性的内容）
+    html = re.sub(r'\s+data-[a-z0-9_-]+=(?:"[^"]*"|\'[^\']*\')', '', html, flags=re.IGNORECASE)
+    # 移除事件属性（onerror/onload/onclick 等）
+    html = re.sub(r'\s+on[a-z]+\s*=\s*(?:"[^"]*"|\'[^\']*\')', '', html, flags=re.IGNORECASE)
+    # 移除本地 /media/ 路径图片（推送到微信时本地路径无法访问，用原始URL）
+    html = re.sub(
+        r'(<img\b[^>]*?\bsrc=["\'])/media/[^"\']+(["\'])',
+        lambda m: m.group(0),  # 保留原标签，下方再处理 orig-url 替换
+        html,
+        flags=re.IGNORECASE,
+    )
+    # 将 /media/ 路径替换为空（PushPlus 无法访问本地文件）
+    html = re.sub(
+        r'(<img\b[^>]*?\bsrc=["\'])/media/[^"\']+(["\'])',
+        r'\1\2',
+        html,
+        flags=re.IGNORECASE,
+    )
+    return html
+
+
 def _build_article_html(item: dict, show_full: bool = True) -> str:
     """
     构建单篇新闻的 HTML 内容（用于微信推送）。
@@ -90,15 +117,17 @@ def _build_article_html(item: dict, show_full: bool = True) -> str:
             '<img style="width:100%;border-radius:8px;margin:10px 0;" ',
             content_html
         )
-        # PushPlus 内容限制 30000 字，截断过长的
-        if len(body) > 25000:
-            body = body[:25000] + '<p>...（正文过长，已截断）</p>'
+        # 清理 PushPlus 不接受的属性（data-*、onerror 等），防止服务端验证错误
+        body = _sanitize_push_html(body)
+        # PushPlus 内容限制 30000 字，截断过长的（保守截到 20000 留余量）
+        if len(body) > 20000:
+            body = body[:20000] + '<p>...（正文过长，已截断）</p>'
         html.append(body)
 
     elif show_full and content:
-        # 回退：用纯文本 + 图片列表
+        # 回退：用纯文本 + 图片列表（图片只用外部 http URL，不用本地路径）
         thumbnail = item.get("thumbnail", "")
-        if thumbnail:
+        if thumbnail and thumbnail.startswith("http"):
             html.append(f'<img src="{thumbnail}" style="width:100%;border-radius:8px;margin:10px 0;"/>')
 
         text = content[:2000]
@@ -109,17 +138,21 @@ def _build_article_html(item: dict, show_full: bool = True) -> str:
             if p:
                 html.append(f'<p>{p}</p>')
 
-        # 补充图片
+        # 补充图片（只用外部 URL，跳过本地 /media/ 路径）
         images_raw = item.get("images", [])
         if isinstance(images_raw, str):
             try:
                 images_raw = json.loads(images_raw)
             except (json.JSONDecodeError, TypeError):
                 images_raw = []
-        for img in images_raw[:5]:
+        shown = 0
+        for img in images_raw:
+            if shown >= 5:
+                break
             img_url = img.get("url", "") if isinstance(img, dict) else str(img)
-            if img_url and img_url != thumbnail:
+            if img_url and img_url.startswith("http") and img_url != thumbnail:
                 html.append(f'<img src="{img_url}" style="width:100%;border-radius:8px;margin:10px 0;"/>')
+                shown += 1
 
     else:
         # 只推摘要
@@ -148,8 +181,15 @@ def push_crawl_summary(items: list, success_count: int,
     if not items:
         return
 
-    # 取全局爬取结果的前2条（即并发中最先完成的来源最靠前的新闻）
-    top2 = items[:2]
+    # 优先取有完整正文（content_html 非空）的前2条，确保推送内容完整
+    # 回退：若无 content_html 则取有纯文本 content 的，最后兜底取前2条
+    top2 = [i for i in items if i.get("content_html") and len(i.get("content_html", "")) > 50][:2]
+    if len(top2) < 2:
+        supplement = [i for i in items
+                      if i not in top2 and i.get("content") and len(i.get("content", "")) > 50]
+        top2 = (top2 + supplement)[:2]
+    if not top2:
+        top2 = items[:2]
 
     for idx, item in enumerate(top2, start=1):
         item_title = item.get("title", "无标题")

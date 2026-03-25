@@ -17,7 +17,13 @@ logger = logging.getLogger(__name__)
 
 class XinhuaCrawler(BaseCrawler):
 
-    detail_selectors = ["#detail", "#detailContent", ".article", ".main-article", ".content"]
+    detail_selectors = [
+        "#detail", "#detailContent", "#detailMain",
+        ".detail", ".article-content", ".article",
+        ".main-article", ".main_content", ".content",
+        "#article", ".newsContent", ".news-content",
+        ".ht-content", ".content_area",
+    ]
 
     def __init__(self):
         super().__init__()
@@ -65,6 +71,37 @@ class XinhuaCrawler(BaseCrawler):
         return results
 
     # ========== 详情页：补充新华网 video_src 视频提取 ==========
+
+    def fetch_detail(self, item: dict) -> dict:
+        """
+        新华网详情页抓取：PC 端正文不足时尝试移动端 m.xinhuanet.com。
+        新华网 PC 端部分文章正文容器加载需要 JS，移动端有静态正文。
+        """
+        url = item.get("url", "")
+        if not url:
+            return {}
+        try:
+            from config import DETAIL_FETCH_TIMEOUT
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            if resp is None:
+                return {}
+            result = self.parse_detail(resp.text, url)
+            # 正文太短时，尝试移动端
+            if not result.get("content") or len(result.get("content", "")) < 100:
+                # 将 www.news.cn 或 www.xinhuanet.com 转为移动端地址
+                mobile_url = url.replace("www.news.cn", "m.xinhuanet.com") \
+                                .replace("www.xinhuanet.com", "m.xinhuanet.com")
+                if mobile_url != url:
+                    m_resp = self._request(mobile_url, timeout=DETAIL_FETCH_TIMEOUT)
+                    if m_resp:
+                        m_result = self.parse_detail(m_resp.text, mobile_url)
+                        if len(m_result.get("content", "")) > len(result.get("content", "")):
+                            self.logger.info(f"[xinhua] 移动端正文更完整: {url[:60]}")
+                            return m_result
+            return result
+        except Exception as e:
+            self.logger.debug(f"[xinhua] 详情页抓取失败: {url} | {e}")
+            return {}
 
     def parse_detail(self, html: str, url: str) -> dict:
         """

@@ -25,7 +25,7 @@ DB_PATH = os.path.join(DATA_DIR, "news.db")
 # ============ 爬取配置 ============
 CRAWL_INTERVAL_HOURS = 1          # 爬取间隔（小时）
 CRAWL_TIMEOUT = 15                # 单次请求超时（秒）
-CRAWL_RETRY = 2                   # 失败重试次数
+CRAWL_RETRY = 3                   # 失败重试次数
 CRAWL_DELAY = (1, 3)              # 请求间隔随机范围（秒）
 MAX_WORKERS = 5                   # 并发线程数（2GB内存服务器，限制峰值线程）
 
