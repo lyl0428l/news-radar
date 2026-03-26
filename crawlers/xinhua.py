@@ -180,23 +180,30 @@ class XinhuaCrawler(BaseCrawler):
         return {}
 
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
-        """通过新华网内容 API 获取完整文章，逐一尝试多个接口和参数"""
-        result = {}
+        """
+        通过新华网内容 API 获取完整文章。
+        每个接口只尝试一次，404/400立即跳下一个，避免重试浪费时间。
+        """
+        session = self._get_session()
+        headers = {
+            "Referer": "https://www.news.cn/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/131.0.0.0 Safari/537.36",
+        }
         param_variants = [
             {"id": article_id},
             {"articleId": article_id},
-            {"newsId": article_id},
-            {"id": article_id, "type": "text"},
         ]
         for api_url in _XINHUA_DETAIL_APIS:
             for params in param_variants:
                 try:
-                    resp = self._request(api_url, params=params,
-                                         timeout=timeout, skip_cffi=True)
-                    if resp is None:
-                        continue
-                    if resp.status_code in (404, 400):
+                    resp = session.get(api_url, params=params,
+                                       headers=headers, timeout=timeout)
+                    if resp.status_code in (404, 400, 403):
                         break
+                    if resp.status_code != 200:
+                        continue
                     data = resp.json()
                     if not isinstance(data, dict):
                         continue
@@ -213,7 +220,7 @@ class XinhuaCrawler(BaseCrawler):
                 except Exception as e:
                     self.logger.debug(f"[xinhua] API 失败: {api_url} | {e}")
                     break
-        return result
+        return {}
 
     def _parse_api_content(self, data: dict, url: str) -> dict:
         """解析新华网 API 返回的文章数据"""

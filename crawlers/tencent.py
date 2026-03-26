@@ -22,15 +22,16 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 logger = logging.getLogger(__name__)
 
-# 腾讯新闻内容 API（只接受纯数字 ID，字母数字混合 ID 会 404）
-# 实测可用的接口：
+# 腾讯新闻内容 API
+# 实测日志证明 r.inews.qq.com/gw/event/article 对所有ID格式均404
+# 改用以下接口（均基于 new.qq.com 域名）：
 _TENCENT_DETAIL_APIS = [
-    # 移动端内容接口（支持字母数字混合 ID）
-    "https://r.inews.qq.com/api/news/detail",
-    # PC 端内容接口
-    "https://new.qq.com/omn/author/article",
-    # 旧版内容接口
-    "https://r.inews.qq.com/gw/event/article",
+    # PC端文章详情接口
+    "https://new.qq.com/rain/api/detail",
+    # 腾讯新闻 SSR 数据接口
+    "https://new.qq.com/api/detail",
+    # 腾讯新闻内容网关（不同路径）
+    "https://r.inews.qq.com/gw/article/detail",
 ]
 
 
@@ -209,34 +210,32 @@ class TencentCrawler(BaseCrawler):
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
         """
         通过腾讯新闻内容 API 获取完整文章数据。
-        腾讯新闻热榜 ID 格式为 20260326A05XYQ00（字母数字混合），
-        不同接口对 ID 格式的支持不同，逐一尝试。
+        每个 API 只尝试一次（不走 _request 的重试机制），
+        404 立即跳下一个，避免大量无效重试拖慢速度。
         """
-        result = {}
-        # 参数组合：不同接口用不同的参数名
+        import requests as _requests
+        headers = {
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                          "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Referer": "https://new.qq.com/",
+        }
         param_variants = [
             {"id": article_id},
             {"artid": article_id},
-            {"newsid": article_id},
-            {"article_id": article_id},
         ]
+        session = self._get_session()
         for api_url in _TENCENT_DETAIL_APIS:
             for params in param_variants:
                 try:
-                    resp = self._request(
-                        api_url,
-                        params=params,
-                        timeout=timeout,
-                        skip_cffi=True,
-                    )
-                    if resp is None:
+                    resp = session.get(api_url, params=params,
+                                       headers=headers, timeout=timeout)
+                    if resp.status_code in (404, 400, 403):
+                        break  # 该接口不支持此ID，换下一个API
+                    if resp.status_code != 200:
                         continue
-                    if resp.status_code == 404:
-                        break  # 该接口不支持，换下一个
                     data = resp.json()
                     if not isinstance(data, dict):
                         continue
-                    # 尝试多种返回结构
                     article = (
                         _safe_dict(data.get("article"))
                         or _safe_dict(data.get("data", {}).get("article"))
@@ -244,22 +243,17 @@ class TencentCrawler(BaseCrawler):
                         or _safe_dict(data.get("newsInfo"))
                         or {}
                     )
-                    if not article:
-                        # 顶层直接是文章数据
-                        if data.get("content") or data.get("articleContent"):
-                            article = data
+                    if not article and (data.get("content") or data.get("articleContent")):
+                        article = data
                     if article:
                         r = self._parse_api_article(article, url)
                         if r and len(_safe_str(r.get("content"))) > 100:
-                            self.logger.info(
-                                f"[tencent] API成功: {api_url.split('/')[-1]} "
-                                f"params={list(params.keys())[0]}"
-                            )
+                            self.logger.info(f"[tencent] API成功: {api_url}")
                             return r
                 except Exception as e:
-                    self.logger.debug(f"[tencent] API {api_url} 失败: {e}")
-                    break  # 该接口有异常，换下一个
-        return result
+                    self.logger.debug(f"[tencent] API {api_url} 异常: {e}")
+                    break
+        return {}
 
     def _parse_api_article(self, article: dict, url: str) -> dict:
         """解析腾讯新闻 API 返回的文章数据"""

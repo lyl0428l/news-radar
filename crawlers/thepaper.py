@@ -220,43 +220,12 @@ class ThePaperCrawler(BaseCrawler):
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
         """
         通过澎湃新闻内容 API 获取完整文章。
-        实测 cache.thepaper.cn 和 api.thepaper.cn 均返回 404，
-        改为直接请求文章页 HTML 并从 __NEXT_DATA__ 提取（最可靠方式）。
-        同时尝试已知可用的 API 端点。
+        经日志验证 cache.thepaper.cn 和 api.thepaper.cn 均404。
+        不再做无效API尝试，直接返回空，由 fetch_detail 走HTML解析路径。
+        保留接口框架以便未来发现可用接口时快速接入。
         """
-        apis = [
-            # 实测可用的 API 端点
-            ("https://www.thepaper.cn/newsDetail_forward_api", {"id": article_id}),
-            ("https://cache.thepaper.cn/contentapi/getDetail", {"contid": article_id}),
-            ("https://www.thepaper.cn/api/paidContext/article", {"contId": article_id}),
-        ]
-        for api_url, params in apis:
-            try:
-                resp = self._request(api_url, params=params,
-                                     timeout=timeout, skip_cffi=True)
-                if resp is None:
-                    continue
-                if resp.status_code in (404, 400, 403):
-                    continue
-                data = resp.json()
-                if not isinstance(data, dict):
-                    continue
-                detail = (
-                    _safe_dict(data.get("data", {}).get("contentDetail"))
-                    or _safe_dict(data.get("newsInfo"))
-                    or _safe_dict(data.get("data"))
-                    or _safe_dict(data.get("content"))
-                )
-                if not detail and (data.get("content") or data.get("name")):
-                    detail = data
-                if detail:
-                    result = self._parse_detail_dict(detail, url)
-                    if len(_safe_str(result.get("content"))) > 100:
-                        self.logger.info(f"[thepaper] API成功: {api_url.split('/')[-1]}")
-                        return result
-            except Exception as e:
-                self.logger.debug(f"[thepaper] API {api_url} 失败: {e}")
-                continue
+        # 目前已知可用接口为空，直接返回让 HTML 解析接手
+        # 避免大量 404 请求浪费时间和日志
         return {}
 
     def parse_detail(self, html: str, url: str) -> dict:
