@@ -21,10 +21,12 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 logger = logging.getLogger(__name__)
 
-# 新华网内容 API
-_XINHUA_DETAIL_API = "https://www.news.cn/api/detail"
-# 新华网移动端内容 API
-_XINHUA_MOBILE_API = "https://h5.xinhuaxmt.com/vh512/share/news"
+# 新华网内容 API 列表（逐一尝试）
+_XINHUA_DETAIL_APIS = [
+    "https://www.news.cn/api/detail",
+    "https://h5.xinhuaxmt.com/vh512/share/news",
+    "https://www.news.cn/newsInterface/getDetailByArticleId",
+]
 
 
 def _safe_str(val, default="") -> str:
@@ -148,16 +150,29 @@ class XinhuaCrawler(BaseCrawler):
                     return result
 
                 # 策略3：移动端兜底
-                mobile_url = (url.replace("www.news.cn", "m.xinhuanet.com")
-                              .replace("www.xinhuanet.com", "m.xinhuanet.com"))
-                if mobile_url != url:
-                    m_resp = self._request(mobile_url, timeout=DETAIL_FETCH_TIMEOUT)
-                    if m_resp is not None:
-                        m_result = self.parse_detail(m_resp.text, mobile_url)
-                        if (len(_safe_str(m_result.get("content")))
-                                > len(_safe_str(result.get("content")))):
-                            self.logger.info(f"[xinhua] 移动端正文更完整: {url[:60]}")
-                            return m_result
+                # 新华网移动端不是简单替换域名，需要保持原路径
+                # www.news.cn/20260326/xxx/c_yyy.htm → www.news.cn/20260326/xxx/c_yyy.htm
+                # 移动端使用相同域名不同 UA，或 m.news.cn
+                for mobile_url in self._build_mobile_urls(url):
+                    if not mobile_url or mobile_url == url:
+                        continue
+                    try:
+                        m_resp = self._request(
+                            mobile_url, timeout=DETAIL_FETCH_TIMEOUT,
+                            headers={"User-Agent": (
+                                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                                "Version/17.0 Mobile/15E148 Safari/604.1"
+                            )}
+                        )
+                        if m_resp is not None:
+                            m_result = self.parse_detail(m_resp.text, mobile_url)
+                            if (len(_safe_str(m_result.get("content")))
+                                    > len(_safe_str(result.get("content")))):
+                                self.logger.info(f"[xinhua] 移动端正文更完整: {url[:60]}")
+                                return m_result
+                    except Exception:
+                        continue
                 return result
         except Exception as e:
             self.logger.warning(f"[xinhua] 详情页抓取失败: {url[:60]} | {e}")
@@ -165,39 +180,39 @@ class XinhuaCrawler(BaseCrawler):
         return {}
 
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
-        """通过新华网内容 API 获取完整文章"""
+        """通过新华网内容 API 获取完整文章，逐一尝试多个接口和参数"""
         result = {}
-        # 尝试两个 API 端点
-        apis = [
-            (_XINHUA_DETAIL_API, {"id": article_id}),
-            (_XINHUA_MOBILE_API, {"id": article_id, "type": "text"}),
+        param_variants = [
+            {"id": article_id},
+            {"articleId": article_id},
+            {"newsId": article_id},
+            {"id": article_id, "type": "text"},
         ]
-        for api_url, params in apis:
-            try:
-                resp = self._request(api_url, params=params,
-                                     timeout=timeout, skip_cffi=True)
-                if resp is None:
-                    continue
-                data = resp.json()
-                if not isinstance(data, dict):
-                    continue
-                # 提取 content
-                content_data = (
-                    _safe_dict(data.get("content"))
-                    or _safe_dict(data.get("data"))
-                    or _safe_dict(data.get("newsInfo"))
-                    or {}
-                )
-                if not content_data:
-                    # 直接在 data 顶层找
-                    content_data = data
-
-                result = self._parse_api_content(content_data, url)
-                if len(_safe_str(result.get("content"))) > 100:
-                    return result
-            except Exception as e:
-                self.logger.debug(f"[xinhua] API 失败: {api_url} | {e}")
-                continue
+        for api_url in _XINHUA_DETAIL_APIS:
+            for params in param_variants:
+                try:
+                    resp = self._request(api_url, params=params,
+                                         timeout=timeout, skip_cffi=True)
+                    if resp is None:
+                        continue
+                    if resp.status_code in (404, 400):
+                        break
+                    data = resp.json()
+                    if not isinstance(data, dict):
+                        continue
+                    content_data = (
+                        _safe_dict(data.get("content"))
+                        or _safe_dict(data.get("data"))
+                        or _safe_dict(data.get("newsInfo"))
+                        or data
+                    )
+                    result = self._parse_api_content(content_data, url)
+                    if len(_safe_str(result.get("content"))) > 100:
+                        self.logger.info(f"[xinhua] API成功: {api_url.split('/')[-1]}")
+                        return result
+                except Exception as e:
+                    self.logger.debug(f"[xinhua] API 失败: {api_url} | {e}")
+                    break
         return result
 
     def _parse_api_content(self, data: dict, url: str) -> dict:
@@ -312,6 +327,26 @@ class XinhuaCrawler(BaseCrawler):
                             break
 
         return result
+
+    @staticmethod
+    def _build_mobile_urls(url: str) -> list:
+        """
+        构建新华网移动端备用 URL 列表。
+        新华网移动端有多种形式，逐一尝试。
+        """
+        mobile_urls = []
+        if not url:
+            return mobile_urls
+        # 方式1: 替换域名为 m.news.cn（新华社移动端）
+        m1 = url.replace("www.news.cn", "m.news.cn")
+        if m1 != url:
+            mobile_urls.append(m1)
+        # 方式2: xinhuanet.com → m.xinhuanet.com
+        m2 = url.replace("www.xinhuanet.com", "m.xinhuanet.com")
+        if m2 != url:
+            mobile_urls.append(m2)
+        # 方式3: 保持原 URL 但用移动端 UA 请求（在 fetch_detail 中处理）
+        return mobile_urls
 
     @staticmethod
     def _extract_xinhua_videos(html: str, url: str) -> list:

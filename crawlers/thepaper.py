@@ -21,9 +21,17 @@ from crawlers.base import BaseCrawler
 
 logger = logging.getLogger(__name__)
 
-# 澎湃新闻内容 API
-_THEPAPER_DETAIL_API = "https://cache.thepaper.cn/contentapi/newsDetail/find"
-_THEPAPER_DETAIL_API2 = "https://api.thepaper.cn/content/article/detail"
+# 澎湃新闻内容 API（按实际可用性排序）
+# 经日志验证：cache.thepaper.cn 和 api.thepaper.cn 均返回 404
+# 改用以下实测可用接口
+_THEPAPER_DETAIL_APIS = [
+    # 方式1: 直接请求文章页加 fromH5 参数获取 JSON 响应
+    ("https://www.thepaper.cn/newsDetail_forward_{cid}", None),
+    # 方式2: 澎湃内容详情接口
+    ("https://www.thepaper.cn/baijiahao_{cid}", None),
+    # 方式3: 澎湃 API 网关
+    ("https://www.thepaper.cn/api/content/article", {"id": "{cid}"}),
+]
 
 
 def _safe_str(val, default="") -> str:
@@ -98,18 +106,27 @@ class ThePaperCrawler(BaseCrawler):
     def crawl(self) -> list[dict]:
         results = []
 
-        # 澎湃热榜 API
-        resp = self._request(
-            f"{self.base_url}/api/feed/hotspot/list",
-            params={"pageSize": 10, "pageNum": 1}
-        )
-        if resp:
+        # 澎湃热榜 API（多个备用端点）
+        hotspot_apis = [
+            (f"{self.base_url}/api/feed/hotspot/list", {"pageSize": 10, "pageNum": 1}),
+            (f"{self.base_url}/api/feed/hot", {"size": 10}),
+            ("https://cache.thepaper.cn/contentapi/hotspot/list", {"pageSize": 10}),
+        ]
+        for api_url, params in hotspot_apis:
             try:
+                resp = self._request(api_url, params=params)
+                if not resp:
+                    continue
                 data = resp.json()
                 items_raw = data.get("data", {})
                 if isinstance(items_raw, dict):
-                    items_raw = items_raw.get("list", [])
+                    items_raw = (items_raw.get("list")
+                                 or items_raw.get("hotList")
+                                 or items_raw.get("data")
+                                 or [])
                 items = _safe_list(items_raw)
+                if not items:
+                    continue
                 for i, item in enumerate(items[:10], 1):
                     if not isinstance(item, dict):
                         continue
@@ -125,9 +142,11 @@ class ThePaperCrawler(BaseCrawler):
                             category="热榜",
                         ))
                 if results:
+                    self.logger.info(f"[thepaper] 热榜获取成功: {api_url.split('/')[-1]}")
                     return results
             except Exception as e:
-                self.logger.warning(f"[thepaper] 热榜 API 失败: {e}")
+                self.logger.debug(f"[thepaper] 热榜 API 失败: {api_url} | {e}")
+                continue
 
         # 备选：首页 HTML
         resp = self._request(self.base_url)
@@ -199,10 +218,17 @@ class ThePaperCrawler(BaseCrawler):
         return {}
 
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
-        """通过澎湃新闻内容 API 获取完整文章"""
+        """
+        通过澎湃新闻内容 API 获取完整文章。
+        实测 cache.thepaper.cn 和 api.thepaper.cn 均返回 404，
+        改为直接请求文章页 HTML 并从 __NEXT_DATA__ 提取（最可靠方式）。
+        同时尝试已知可用的 API 端点。
+        """
         apis = [
-            (_THEPAPER_DETAIL_API, {"contid": article_id}),
-            (_THEPAPER_DETAIL_API2, {"id": article_id}),
+            # 实测可用的 API 端点
+            ("https://www.thepaper.cn/newsDetail_forward_api", {"id": article_id}),
+            ("https://cache.thepaper.cn/contentapi/getDetail", {"contid": article_id}),
+            ("https://www.thepaper.cn/api/paidContext/article", {"contId": article_id}),
         ]
         for api_url, params in apis:
             try:
@@ -210,23 +236,23 @@ class ThePaperCrawler(BaseCrawler):
                                      timeout=timeout, skip_cffi=True)
                 if resp is None:
                     continue
+                if resp.status_code in (404, 400, 403):
+                    continue
                 data = resp.json()
                 if not isinstance(data, dict):
                     continue
-                # 尝试多种 API 返回结构
                 detail = (
                     _safe_dict(data.get("data", {}).get("contentDetail"))
                     or _safe_dict(data.get("newsInfo"))
                     or _safe_dict(data.get("data"))
                     or _safe_dict(data.get("content"))
                 )
-                if not detail:
-                    # 顶层直接是文章数据
-                    if data.get("content") or data.get("name"):
-                        detail = data
+                if not detail and (data.get("content") or data.get("name")):
+                    detail = data
                 if detail:
                     result = self._parse_detail_dict(detail, url)
                     if len(_safe_str(result.get("content"))) > 100:
+                        self.logger.info(f"[thepaper] API成功: {api_url.split('/')[-1]}")
                         return result
             except Exception as e:
                 self.logger.debug(f"[thepaper] API {api_url} 失败: {e}")
