@@ -121,9 +121,10 @@ class XinhuaCrawler(BaseCrawler):
     def fetch_detail(self, item: dict) -> dict:
         """
         新华网详情页抓取。
-        策略1：新华网内容 API（直接 JSON）
-        策略2：PC 端 HTML
-        策略3：移动端 HTML（PC 正文不足时兜底）
+        策略1: 用移动端UA请求原始URL（新华网对移动端返回更完整的静态HTML）
+        策略2: 用PC端UA请求原始URL
+        策略3: readability兜底
+        不再尝试API和m.news.cn域名（经实测均404）
         """
         if not isinstance(item, dict):
             return {}
@@ -133,47 +134,29 @@ class XinhuaCrawler(BaseCrawler):
 
         from config import DETAIL_FETCH_TIMEOUT
 
-        # 策略1：新华网内容 API
-        article_id = _extract_xinhua_article_id(url)
-        if article_id:
-            result = self._fetch_via_api(article_id, url, DETAIL_FETCH_TIMEOUT)
-            if result and len(_safe_str(result.get("content"))) > 100:
-                self.logger.info(f"[xinhua] API 提取成功: {url[:60]}")
-                return result
+        mobile_ua = (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            "Version/17.0 Mobile/15E148 Safari/604.1"
+        )
 
-        # 策略2：PC 端 HTML
+        # --- 策略1: 移动端UA请求原始URL ---
         try:
-            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT,
+                                 headers={"User-Agent": mobile_ua})
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
                 if len(_safe_str(result.get("content"))) >= 100:
                     return result
+        except Exception as e:
+            self.logger.debug(f"[xinhua] 移动端UA请求失败: {url[:60]} | {e}")
 
-                # 策略3：移动端兜底
-                # 新华网移动端不是简单替换域名，需要保持原路径
-                # www.news.cn/20260326/xxx/c_yyy.htm → www.news.cn/20260326/xxx/c_yyy.htm
-                # 移动端使用相同域名不同 UA，或 m.news.cn
-                for mobile_url in self._build_mobile_urls(url):
-                    if not mobile_url or mobile_url == url:
-                        continue
-                    try:
-                        m_resp = self._request(
-                            mobile_url, timeout=DETAIL_FETCH_TIMEOUT,
-                            headers={"User-Agent": (
-                                "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-                                "Version/17.0 Mobile/15E148 Safari/604.1"
-                            )}
-                        )
-                        if m_resp is not None:
-                            m_result = self.parse_detail(m_resp.text, mobile_url)
-                            if (len(_safe_str(m_result.get("content")))
-                                    > len(_safe_str(result.get("content")))):
-                                self.logger.info(f"[xinhua] 移动端正文更完整: {url[:60]}")
-                                return m_result
-                    except Exception:
-                        continue
-                return result
+        # --- 策略2: PC端UA请求 ---
+        try:
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            if resp is not None:
+                result = self.parse_detail(resp.text, url)
+                return result  # 即使正文短也返回，不再尝试其他无效路径
         except Exception as e:
             self.logger.warning(f"[xinhua] 详情页抓取失败: {url[:60]} | {e}")
 

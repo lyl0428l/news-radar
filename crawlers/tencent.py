@@ -175,8 +175,10 @@ class TencentCrawler(BaseCrawler):
     def fetch_detail(self, item: dict) -> dict:
         """
         腾讯新闻详情页抓取。
-        优先用内容 API 直接获取 JSON 数据（完整正文，无需解析 JS），
-        API 失败时再请求网页 HTML 解析。
+        策略1: 移动端UA请求（腾讯移动端HTML包含更完整的内联JSON数据）
+        策略2: PC端UA请求 + JS变量/JSON-LD提取
+        策略3: readability兜底
+        不再尝试API（经实测r.inews.qq.com和new.qq.com的API对所有ID格式均404）
         """
         if not isinstance(item, dict):
             return {}
@@ -186,24 +188,31 @@ class TencentCrawler(BaseCrawler):
 
         from config import DETAIL_FETCH_TIMEOUT
 
-        # --- 策略1: 直接调用腾讯新闻内容 API ---
-        article_id = _extract_article_id(url)
-        if article_id:
-            result = self._fetch_via_api(article_id, url, DETAIL_FETCH_TIMEOUT)
-            if result and len(_safe_str(result.get("content"))) > 100:
-                self.logger.info(f"[tencent] API 提取成功: {url[:60]}")
-                return result
+        # --- 策略1: 移动端UA请求（移动端页面内嵌更多JSON数据）---
+        mobile_ua = (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            "Version/17.0 Mobile/15E148 Safari/604.1"
+        )
+        try:
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT,
+                                 headers={"User-Agent": mobile_ua})
+            if resp is not None:
+                result = self.parse_detail(resp.text, url)
+                if result and len(_safe_str(result.get("content"))) > 50:
+                    return result
+        except Exception as e:
+            self.logger.debug(f"[tencent] 移动端请求失败: {url[:60]} | {e}")
 
-        # --- 策略2: 请求网页 HTML 解析 ---
+        # --- 策略2: PC端UA请求 ---
         try:
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
-            if resp is None:
-                return {}
-            result = self.parse_detail(resp.text, url)
-            if result and len(_safe_str(result.get("content"))) > 50:
-                return result
+            if resp is not None:
+                result = self.parse_detail(resp.text, url)
+                if result and len(_safe_str(result.get("content"))) > 50:
+                    return result
         except Exception as e:
-            self.logger.warning(f"[tencent] HTML 请求失败: {url[:60]} | {e}")
+            self.logger.debug(f"[tencent] PC端请求失败: {url[:60]} | {e}")
 
         return {}
 
