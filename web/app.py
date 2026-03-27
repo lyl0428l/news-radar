@@ -15,7 +15,10 @@ import threading
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, Response
 from config import WEB_HOST, WEB_PORT, WEB_DEBUG, SITES, MEDIA_DIR
-from storage import get_news, get_news_by_id, get_stats, get_crawl_health, get_crawl_rounds, mark_read
+from storage import (get_news, get_news_by_id, get_stats, get_crawl_health,
+                     get_crawl_rounds, mark_read, mark_read_batch,
+                     get_news_feed, toggle_favorite, get_favorites, is_favorited,
+                     get_daily_stats, get_source_daily_stats, get_push_logs)
 from models import init_db
 
 logger = logging.getLogger(__name__)
@@ -530,6 +533,117 @@ def serve_media(filename):
         abort(403)
 
     return send_from_directory(MEDIA_DIR, safe_name)
+
+
+@app.route("/api/feed")
+def api_feed():
+    """无限滚动接口 - 热度排行"""
+    source = request.args.get("source", "")
+    keyword = request.args.get("keyword", "")
+    try:
+        last_id = int(request.args.get("last_id", 0)) or None
+    except (ValueError, TypeError):
+        last_id = None
+    try:
+        limit = min(int(request.args.get("limit", 20)), 50)
+    except (ValueError, TypeError):
+        limit = 20
+    try:
+        hours = int(request.args.get("hours", 0)) or None
+    except (ValueError, TypeError):
+        hours = None
+
+    news_list, has_more = get_news_feed(
+        source=source or None,
+        keyword=keyword or None,
+        last_id=last_id,
+        limit=limit,
+        hours=hours,
+    )
+    news_list = _enrich_thumbnails(news_list)
+    return jsonify({
+        "data": news_list,
+        "has_more": has_more,
+        "last_id": news_list[-1]["id"] if news_list else None,
+    })
+
+
+@app.route("/api/favorite/<int:news_id>", methods=["POST"])
+def api_toggle_favorite(news_id):
+    """切换收藏状态"""
+    result = toggle_favorite(news_id)
+    return jsonify(result)
+
+
+@app.route("/api/favorites")
+def api_favorites():
+    """获取收藏列表"""
+    try:
+        page = int(request.args.get("page", 1))
+    except (ValueError, TypeError):
+        page = 1
+    per_page = 20
+    news_list, total = get_favorites(limit=per_page, offset=(page - 1) * per_page)
+    news_list = _enrich_thumbnails(news_list)
+    return jsonify({"data": news_list, "total": total})
+
+
+@app.route("/favorites")
+def favorites_page():
+    """收藏夹页面"""
+    news_list, total = get_favorites(limit=50)
+    news_list = _enrich_thumbnails(news_list)
+    sites = [(s.display_name, s.module) for s in SITES]
+    return render_template("favorites.html", news_list=news_list,
+                           total=total, sites=sites)
+
+
+@app.route("/api/mark_read_all", methods=["POST"])
+def api_mark_read_all():
+    """标记全部为已读"""
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids", [])
+    if ids:
+        updated = mark_read_batch(ids)
+    else:
+        updated = 0
+    return jsonify({"ok": True, "updated": updated})
+
+
+@app.route("/stats")
+def stats_page():
+    """数据统计页面"""
+    daily = get_daily_stats(days=14)
+    source_daily = get_source_daily_stats(days=7)
+    push_logs = get_push_logs(limit=50)
+    stats = _cached("stats", get_stats)
+    sites = [(s.display_name, s.module) for s in SITES]
+    return render_template("stats.html", daily=daily,
+                           source_daily=source_daily,
+                           push_logs=push_logs,
+                           stats=stats, sites=sites)
+
+
+@app.route("/api/daily_stats")
+def api_daily_stats():
+    """每日爬取量统计"""
+    try:
+        days = int(request.args.get("days", 14))
+    except (ValueError, TypeError):
+        days = 14
+    return jsonify(get_daily_stats(days=days))
+
+
+@app.route("/api/source_stats")
+def api_source_stats():
+    """各来源占比统计"""
+    return jsonify(get_source_daily_stats(days=7))
+
+
+@app.route("/api/push_logs")
+def api_push_logs():
+    """推送记录"""
+    return jsonify(get_push_logs(limit=50))
 
 
 @app.route("/api/export")

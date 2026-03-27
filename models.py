@@ -56,6 +56,29 @@ def init_db():
             )
         """)
 
+        # ========== 收藏夹表 ==========
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                news_id    INTEGER NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # ========== 推送记录表 ==========
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS push_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                push_time   TEXT NOT NULL,
+                news_count  INTEGER DEFAULT 0,
+                push_type   TEXT DEFAULT 'summary',
+                title       TEXT DEFAULT '',
+                status      TEXT DEFAULT 'ok',
+                error_msg   TEXT DEFAULT '',
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # ========== 兼容旧数据库：逐列迁移 ==========
         _migrate_column(cursor, "news", "rank", "INTEGER DEFAULT 0")
         _migrate_column(cursor, "news", "content", "TEXT DEFAULT ''")

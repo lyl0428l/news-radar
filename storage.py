@@ -657,3 +657,219 @@ def mark_read(news_id: int) -> bool:
             raise
         finally:
             conn.close()
+
+
+def mark_read_batch(news_ids: list) -> int:
+    """批量标记已读，返回更新条数"""
+    if not news_ids:
+        return 0
+    with _db_write_lock:
+        conn = _get_connection()
+        try:
+            conn.execute("BEGIN")
+            placeholders = ",".join(["?"] * len(news_ids))
+            cursor = conn.execute(
+                f"UPDATE news SET is_read = 1 WHERE id IN ({placeholders})",
+                news_ids
+            )
+            conn.commit()
+            return cursor.rowcount
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def get_news_feed(source=None, keyword=None, last_id=None,
+                  limit=20, hours=None) -> tuple:
+    """
+    无限滚动接口：按热度排序（rank ASC）+ 爬取时间排序（crawl_time DESC）。
+    支持游标分页（last_id），避免 OFFSET 性能问题。
+    返回 (news_list, has_more)。
+    """
+    conn = _get_connection(readonly=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        where = "WHERE 1=1"
+        params = []
+
+        if source:
+            where += " AND source = ?"
+            params.append(source)
+
+        if keyword:
+            escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            kw_pattern = f"%{escaped}%"
+            where += (" AND (title LIKE ? ESCAPE '\\'"
+                      " OR summary LIKE ? ESCAPE '\\'"
+                      " OR content LIKE ? ESCAPE '\\')")
+            params.extend([kw_pattern, kw_pattern, kw_pattern])
+
+        if hours:
+            cutoff = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+            where += " AND crawl_time >= ?"
+            params.append(cutoff)
+
+        if last_id:
+            where += " AND id < ?"
+            params.append(last_id)
+
+        # 热度优先：rank=1最热，rank=0放最后；同rank按爬取时间倒序
+        query = f"""
+            SELECT * FROM news {where}
+            ORDER BY
+                CASE WHEN rank > 0 THEN rank ELSE 999 END ASC,
+                crawl_time DESC
+            LIMIT ?
+        """
+        params.append(limit + 1)
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        has_more = len(rows) > limit
+        results = [_deserialize_row(r) for r in rows[:limit]]
+        return results, has_more
+    finally:
+        conn.close()
+
+
+def toggle_favorite(news_id: int) -> dict:
+    """切换收藏状态，返回 {favorited: bool}"""
+    with _db_write_lock:
+        conn = _get_connection()
+        try:
+            conn.execute("BEGIN")
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM favorites WHERE news_id = ?", (news_id,))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute("DELETE FROM favorites WHERE news_id = ?", (news_id,))
+                favorited = False
+            else:
+                cursor.execute("INSERT INTO favorites (news_id) VALUES (?)", (news_id,))
+                favorited = True
+            conn.commit()
+            return {"favorited": favorited}
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def get_favorites(limit=100, offset=0) -> tuple:
+    """获取收藏列表，返回 (news_list, total)"""
+    conn = _get_connection(readonly=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*) FROM favorites f
+            JOIN news n ON f.news_id = n.id
+        """)
+        total = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT n.* FROM news n
+            JOIN favorites f ON f.news_id = n.id
+            ORDER BY f.created_at DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        rows = cursor.fetchall()
+        results = [_deserialize_row(r) for r in rows]
+        return results, total
+    finally:
+        conn.close()
+
+
+def is_favorited(news_id: int) -> bool:
+    """检查单条新闻是否已收藏"""
+    conn = _get_connection(readonly=True)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM favorites WHERE news_id = ?", (news_id,))
+        return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def get_daily_stats(days: int = 14) -> list:
+    """
+    获取最近N天每天的爬取量统计。
+    返回 [{"date": "2026-03-27", "count": 120}, ...]
+    """
+    conn = _get_connection(readonly=True)
+    try:
+        cursor = conn.cursor()
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cursor.execute("""
+            SELECT substr(crawl_time, 1, 10) as date, COUNT(*) as count
+            FROM news
+            WHERE substr(crawl_time, 1, 10) >= ?
+            GROUP BY date
+            ORDER BY date ASC
+        """, (cutoff,))
+        return [{"date": r[0], "count": r[1]} for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_source_daily_stats(days: int = 7) -> list:
+    """
+    获取最近N天各来源的每日爬取量。
+    返回 [{"source_name": "新浪新闻", "date": "2026-03-27", "count": 10}, ...]
+    """
+    conn = _get_connection(readonly=True)
+    try:
+        cursor = conn.cursor()
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        cursor.execute("""
+            SELECT source_name, substr(crawl_time, 1, 10) as date, COUNT(*) as count
+            FROM news
+            WHERE substr(crawl_time, 1, 10) >= ?
+            GROUP BY source_name, date
+            ORDER BY date ASC, count DESC
+        """, (cutoff,))
+        return [{"source_name": r[0], "date": r[1], "count": r[2]}
+                for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_push_logs(limit: int = 50) -> list:
+    """获取推送记录"""
+    conn = _get_connection(readonly=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM push_log
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(r) for r in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def log_push(push_type: str, news_count: int, title: str = "",
+             status: str = "ok", error_msg: str = ""):
+    """记录一次推送"""
+    with _db_write_lock:
+        conn = _get_connection()
+        try:
+            conn.execute("BEGIN")
+            conn.execute("""
+                INSERT INTO push_log (push_time, news_count, push_type, title, status, error_msg)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                news_count, push_type, title, status, error_msg
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        finally:
+            conn.close()

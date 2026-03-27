@@ -239,7 +239,12 @@ def push_crawl_summary(items: list, success_count: int,
         html_parts.append(_build_article_html(item, show_full=True))
 
         content = "\n".join(html_parts)
-        _send(PUSH_TOKEN, push_title, content, topic=PUSH_TOPIC)
+        ok = _send(PUSH_TOKEN, push_title, content, topic=PUSH_TOPIC)
+        try:
+            from storage import log_push
+            log_push("summary", 1, push_title, "ok" if ok else "fail")
+        except Exception:
+            pass
 
     logger.info(f"[推送] 本轮推送排名前 {len(top2)} 条新闻")
 
@@ -270,7 +275,12 @@ def push_breaking_news(item: dict, keyword: str):
     html_parts.append(_build_article_html(item, show_full=True))
 
     html = "\n".join(html_parts)
-    _send(PUSH_TOKEN, title, html, topic=PUSH_TOPIC)
+    ok = _send(PUSH_TOKEN, title, html, topic=PUSH_TOPIC)
+    try:
+        from storage import log_push
+        log_push("breaking", 1, title, "ok" if ok else "fail")
+    except Exception:
+        pass
 
 
 def check_and_push_breaking(items: list):
