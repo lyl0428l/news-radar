@@ -364,8 +364,7 @@ class BaseCrawler(ABC):
 
         流程：
         1. 先用 requests 发静态HTTP请求（快速，低资源）
-        2. 如果正文不足200字（说明JS渲染问题或提取到导航/版权等垃圾文本），
-           用 Playwright 浏览器渲染重试
+        2. 如果正文不足100字（说明JS渲染问题），用 Playwright 浏览器渲染重试
         """
         if not isinstance(item, dict):
             return {}
@@ -373,7 +372,7 @@ class BaseCrawler(ABC):
         if not url or not isinstance(url, str):
             return {}
 
-        _MIN_CONTENT_LEN = 200  # 正文最低有效长度（低于此值触发Playwright）
+        _MIN_CONTENT_LEN = 100  # 正文最低有效长度（低于此值触发Playwright）
 
         # --- 阶段1: 静态HTTP请求（快速）---
         result = {}
@@ -417,8 +416,7 @@ class BaseCrawler(ABC):
         """
         Playwright 浏览器渲染兜底。
         当静态HTTP请求无法获取完整正文时，子类的 fetch_detail 可调用此方法。
-        只有正文不足200字时才会触发 Playwright 渲染。
-        200字阈值可以过滤掉导航栏/版权声明等凑数文本。
+        只有正文不足100字时才会触发 Playwright 渲染。
 
         参数:
             url: 文章 URL
@@ -427,7 +425,7 @@ class BaseCrawler(ABC):
         返回:
             渲染后提取的 dict 结果，或传入的 existing_result
         """
-        _MIN_CONTENT_LEN = 200
+        _MIN_CONTENT_LEN = 100
 
         if not existing_result:
             existing_result = {}

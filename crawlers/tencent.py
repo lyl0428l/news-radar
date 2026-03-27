@@ -199,7 +199,7 @@ class TencentCrawler(BaseCrawler):
                                  headers={"User-Agent": mobile_ua})
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
-                if result and len(_safe_str(result.get("content"))) >= 200:
+                if result and len(_safe_str(result.get("content"))) >= 100:
                     return result
         except Exception as e:
             self.logger.debug(f"[tencent] 移动端请求失败: {url[:60]} | {e}")
@@ -210,7 +210,7 @@ class TencentCrawler(BaseCrawler):
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
-                if result and len(_safe_str(result.get("content"))) >= 200:
+                if result and len(_safe_str(result.get("content"))) >= 100:
                     return result
         except Exception as e:
             self.logger.debug(f"[tencent] PC端请求失败: {url[:60]} | {e}")
