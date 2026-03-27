@@ -146,7 +146,7 @@ class XinhuaCrawler(BaseCrawler):
                                  headers={"User-Agent": mobile_ua})
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
-                if len(_safe_str(result.get("content"))) >= 100:
+                if len(_safe_str(result.get("content"))) >= 200:
                     return result
         except Exception as e:
             self.logger.debug(f"[xinhua] 移动端UA请求失败: {url[:60]} | {e}")
@@ -157,7 +157,7 @@ class XinhuaCrawler(BaseCrawler):
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
-                if len(_safe_str(result.get("content"))) >= 100:
+                if len(_safe_str(result.get("content"))) >= 200:
                     return result
         except Exception as e:
             self.logger.debug(f"[xinhua] PC端请求失败: {url[:60]} | {e}")

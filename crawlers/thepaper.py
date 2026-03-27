@@ -213,7 +213,7 @@ class ThePaperCrawler(BaseCrawler):
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
-                if result and len(_safe_str(result.get("content"))) > 50:
+                if result and len(_safe_str(result.get("content"))) >= 200:
                     return result
         except Exception as e:
             self.logger.debug(f"[thepaper] HTML请求失败: {url[:60]} | {e}")

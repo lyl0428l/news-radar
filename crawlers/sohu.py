@@ -160,7 +160,7 @@ class SohuCrawler(BaseCrawler):
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
                 content = _safe_str(result.get("content"))
-                if len(content) >= 100:
+                if len(content) >= 200:
                     return result
                 # 正文不足，尝试移动端
                 mobile_url = url.replace("www.sohu.com", "m.sohu.com")
