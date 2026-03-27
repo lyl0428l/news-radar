@@ -83,6 +83,3 @@ class SinaCrawler(BaseCrawler):
                 self.logger.warning(f"[sina] 滚动 API 解析失败: {e}")
 
         return results
-# auto-deploy test 03/27/2026 09:45:47
-# deploy test 2
-# deploy test 3
