@@ -152,15 +152,18 @@ class XinhuaCrawler(BaseCrawler):
             self.logger.debug(f"[xinhua] 移动端UA请求失败: {url[:60]} | {e}")
 
         # --- 策略2: PC端UA请求 ---
+        result = {}
         try:
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is not None:
                 result = self.parse_detail(resp.text, url)
-                return result  # 即使正文短也返回，不再尝试其他无效路径
+                if len(_safe_str(result.get("content"))) >= 100:
+                    return result
         except Exception as e:
-            self.logger.warning(f"[xinhua] 详情页抓取失败: {url[:60]} | {e}")
+            self.logger.debug(f"[xinhua] PC端请求失败: {url[:60]} | {e}")
 
-        return {}
+        # --- 策略3: Playwright 浏览器渲染兜底 ---
+        return self._playwright_fallback(url, result)
 
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
         """

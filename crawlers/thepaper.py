@@ -207,15 +207,19 @@ class ThePaperCrawler(BaseCrawler):
                 self.logger.info(f"[thepaper] API 提取成功: {url[:60]}")
                 return result
 
-        # 策略2 & 3：HTML
+        # 策略2：HTML（__NEXT_DATA__ + readability）
+        result = {}
         try:
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is not None:
-                return self.parse_detail(resp.text, url)
+                result = self.parse_detail(resp.text, url)
+                if result and len(_safe_str(result.get("content"))) > 50:
+                    return result
         except Exception as e:
-            self.logger.warning(f"[thepaper] 详情页抓取失败: {url[:60]} | {e}")
+            self.logger.debug(f"[thepaper] HTML请求失败: {url[:60]} | {e}")
 
-        return {}
+        # 策略3：Playwright 浏览器渲染兜底
+        return self._playwright_fallback(url, result)
 
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
         """

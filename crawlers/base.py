@@ -410,6 +410,48 @@ class BaseCrawler(ABC):
 
         return result if isinstance(result, dict) else {}
 
+    def _playwright_fallback(self, url: str, existing_result: dict = None) -> dict:
+        """
+        Playwright 浏览器渲染兜底。
+        当静态HTTP请求无法获取完整正文时，子类的 fetch_detail 可调用此方法。
+        只有正文不足100字时才会触发 Playwright 渲染。
+
+        参数:
+            url: 文章 URL
+            existing_result: 静态请求已获取的部分结果（用于比较正文长度）
+
+        返回:
+            渲染后提取的 dict 结果，或传入的 existing_result
+        """
+        if not existing_result:
+            existing_result = {}
+        old_content = existing_result.get("content") or "" if isinstance(existing_result, dict) else ""
+
+        # 正文已足够长，不需要 Playwright
+        if len(old_content) >= 100:
+            return existing_result
+
+        try:
+            from utils.browser import fetch_page_html
+            wait_sel = self.detail_selectors[0] if self.detail_selectors else None
+            rendered_html = fetch_page_html(
+                url, timeout=DETAIL_FETCH_TIMEOUT,
+                wait_selector=wait_sel, wait_time=3000,
+            )
+            if rendered_html:
+                rendered_result = self.parse_detail(rendered_html, url)
+                if isinstance(rendered_result, dict):
+                    new_content = rendered_result.get("content") or ""
+                    if len(new_content) > len(old_content):
+                        self.logger.info(f"[{self.name}] Playwright 渲染成功: {url[:60]}")
+                        return rendered_result
+        except ImportError:
+            pass
+        except Exception as e:
+            self.logger.debug(f"[{self.name}] Playwright 渲染失败: {url[:60]} | {e}")
+
+        return existing_result
+
     def parse_detail(self, html: str, url: str) -> dict:
         """
         从详情页 HTML 中提取正文/图片/视频。

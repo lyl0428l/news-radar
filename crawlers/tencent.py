@@ -205,6 +205,7 @@ class TencentCrawler(BaseCrawler):
             self.logger.debug(f"[tencent] 移动端请求失败: {url[:60]} | {e}")
 
         # --- 策略2: PC端UA请求 ---
+        result = {}
         try:
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is not None:
@@ -214,7 +215,8 @@ class TencentCrawler(BaseCrawler):
         except Exception as e:
             self.logger.debug(f"[tencent] PC端请求失败: {url[:60]} | {e}")
 
-        return {}
+        # --- 策略3: Playwright 浏览器渲染兜底 ---
+        return self._playwright_fallback(url, result)
 
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
         """

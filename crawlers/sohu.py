@@ -171,11 +171,13 @@ class SohuCrawler(BaseCrawler):
                         if len(_safe_str(m_result.get("content"))) > len(content):
                             self.logger.info(f"[sohu] 移动端正文更完整: {url[:60]}")
                             return m_result
-                return result
+                # PC端+移动端都正文不足，Playwright兜底
+                return self._playwright_fallback(url, result)
         except Exception as e:
             self.logger.warning(f"[sohu] 详情页抓取失败: {url[:60]} | {e}")
 
-        return {}
+        # 静态请求全部失败，Playwright兜底
+        return self._playwright_fallback(url, {})
 
     def parse_detail(self, html: str, url: str) -> dict:
         """
