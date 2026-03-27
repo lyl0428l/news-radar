@@ -125,7 +125,7 @@ def fetch_page_html(url: str, timeout: int = 15,
         )
         stdout, stderr = proc.communicate(
             input=(args + "\n").encode("utf-8"),
-            timeout=timeout + 30,  # 子进程超时比页面超时多30秒
+            timeout=timeout + 15,  # 子进程超时比页面超时多15秒（启动Chromium需要时间）
         )
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace").strip()
