@@ -36,6 +36,7 @@ $files = @{
     "crawlers/ifeng.py"              = "$PROJECT\crawlers\ifeng.py"
     "utils/notify.py"                = "$PROJECT\utils\notify.py"
     "utils/content_extractor.py"     = "$PROJECT\utils\content_extractor.py"
+    "utils/browser.py"               = "$PROJECT\utils\browser.py"
     "utils/sync_remote.py"           = "$PROJECT\utils\sync_remote.py"
     "web/app.py"                     = "$PROJECT\web\app.py"
     "web/templates/index.html"       = "$PROJECT\web\templates\index.html"
@@ -78,7 +79,10 @@ if ($updated -gt 0) {
     Write-Log "changes detected, restarting services..."
     Get-Process python,pythonw -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Seconds 3
-    PowerShell -ExecutionPolicy Bypass -File "$PROJECT\start_services.ps1"
+    # 直接启动（不依赖 start_services.ps1，避免该文件损坏导致启动失败）
+    Start-Process python -ArgumentList @("$PROJECT\run_web.py") -WorkingDirectory $PROJECT -WindowStyle Hidden
+    Start-Sleep -Seconds 2
+    Start-Process python -ArgumentList @("$PROJECT\scheduler.py") -WorkingDirectory $PROJECT -WindowStyle Hidden
     Start-Sleep -Seconds 5
     $procs = Get-Process python,pythonw -ErrorAction SilentlyContinue
     if ($procs) {
