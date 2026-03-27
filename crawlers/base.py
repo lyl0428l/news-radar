@@ -361,22 +361,54 @@ class BaseCrawler(ABC):
         抓取单篇新闻详情页，提取正文/图片/视频。
         返回 {"content", "content_html", "images", "videos", "thumbnail"}。
         子类可重写此方法实现自定义逻辑。
+
+        流程：
+        1. 先用 requests 发静态HTTP请求（快速，低资源）
+        2. 如果正文不足100字（说明JS渲染问题），用 Playwright 浏览器渲染重试
         """
         if not isinstance(item, dict):
             return {}
         url = item.get("url", "") or ""
         if not url or not isinstance(url, str):
             return {}
+
+        # --- 阶段1: 静态HTTP请求（快速）---
+        result = {}
         try:
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
-            if resp is None:
-                return {}
-            html = resp.text if resp.text else ""
-            result = self.parse_detail(html, url)
-            return result if isinstance(result, dict) else {}
+            if resp is not None:
+                html = resp.text if resp.text else ""
+                result = self.parse_detail(html, url)
+                if isinstance(result, dict) and len((result.get("content") or "")) >= 100:
+                    return result
         except Exception as e:
-            self.logger.warning(f"[{self.name}] 详情页抓取失败: {url[:60]} | {e}")
-            return {}
+            self.logger.debug(f"[{self.name}] 静态请求失败: {url[:60]} | {e}")
+
+        # --- 阶段2: Playwright浏览器渲染（正文不足时自动触发）---
+        try:
+            from utils.browser import fetch_page_html
+            # 构建等待选择器（优先用子类定义的选择器）
+            wait_sel = None
+            if self.detail_selectors:
+                wait_sel = self.detail_selectors[0]
+            rendered_html = fetch_page_html(
+                url, timeout=DETAIL_FETCH_TIMEOUT,
+                wait_selector=wait_sel, wait_time=3000,
+            )
+            if rendered_html:
+                rendered_result = self.parse_detail(rendered_html, url)
+                if isinstance(rendered_result, dict):
+                    new_content = rendered_result.get("content") or ""
+                    old_content = (result.get("content") or "") if isinstance(result, dict) else ""
+                    if len(new_content) > len(old_content):
+                        self.logger.info(f"[{self.name}] Playwright 渲染成功: {url[:60]}")
+                        return rendered_result
+        except ImportError:
+            pass  # Playwright 未安装，跳过
+        except Exception as e:
+            self.logger.debug(f"[{self.name}] Playwright 渲染失败: {url[:60]} | {e}")
+
+        return result if isinstance(result, dict) else {}
 
     def parse_detail(self, html: str, url: str) -> dict:
         """
