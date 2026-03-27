@@ -4,7 +4,6 @@ on:
   push:
     branches: [ master ]
     paths:
-      # 只有以下文件变更时才触发（忽略文档、配置等无关文件）
       - 'crawlers/**'
       - 'utils/**'
       - 'web/**'
@@ -17,6 +16,8 @@ on:
       - 'run_web.py'
       - 'server_receiver.py'
       - 'logging_config.py'
+      - 'auto_update.ps1'
+      - 'start_services.ps1'
 
 jobs:
   notify-update:
