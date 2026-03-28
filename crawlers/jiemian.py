@@ -39,13 +39,58 @@ _CHANNEL_PAGES = [
 
 class JiemianCrawler(BaseCrawler):
 
-    detail_selectors = [".article-content", ".article-main", ".article-view"]
+    detail_selectors = [
+        ".article-content",       # 正文主体（最常见）
+        ".article-main",          # 正文外层容器
+        ".article-view",          # 沉浸式阅读模式
+        "#article_detail",        # 旧版详情页
+        ".article-detail",        # 旧版详情页备用
+        ".article-body",          # 备用
+        "[class*='articleContent']",
+        "[class*='article-content']",
+    ]
 
     def __init__(self):
         super().__init__()
         self.name = "jiemian"
         self.display_name = "界面新闻"
         self.language = "zh"
+
+    def fetch_detail(self, item: dict) -> dict:
+        """
+        界面新闻详情页抓取（纯静态HTTP）。
+        界面新闻是 SSR，正文在首次 HTML 中就有。
+        关键：使用完整桌面 UA 并设置 Referer，避免被反爬拦截。
+        """
+        if not isinstance(item, dict):
+            return {}
+        url = item.get("url", "") or ""
+        if not url:
+            return {}
+
+        from config import DETAIL_FETCH_TIMEOUT
+
+        # 界面新闻对 UA 较敏感，用完整桌面浏览器 UA + Referer
+        headers = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/131.0.0.0 Safari/537.36"),
+            "Referer": "https://www.jiemian.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
+
+        # 静态 HTTP 请求（Playwright 渲染由 main.py 统一批量处理）
+        result = {}
+        try:
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT, headers=headers)
+            if resp is not None:
+                resp.encoding = "utf-8"
+                result = self.parse_detail(resp.text, url)
+        except Exception as e:
+            self.logger.debug(f"[jiemian] 静态请求失败: {url[:60]} | {e}")
+
+        return result
 
     def parse_detail(self, html: str, url: str) -> dict:
         """界面新闻详情页解析：通用提取器 + 作者/时间补充"""
