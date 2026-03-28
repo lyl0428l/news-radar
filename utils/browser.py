@@ -1,17 +1,7 @@
 """
-Playwright 浏览器渲染工具 — 常驻子进程模式
+Playwright 浏览器渲染工具 — 常驻子进程模式（Windows 兼容版）
 
-架构：
-  主进程 (scheduler.py)
-    ↕ stdin/stdout JSON 通信
-  常驻子进程 (_render_worker.py)
-    └── Chromium 浏览器实例（启动后常驻，不反复创建/销毁）
-
-优势：
-  - Chromium 只启动一次，每篇文章渲染仅需 3-5 秒（之前 15-25 秒）
-  - 完全隔离 asyncio 事件循环，无多线程冲突
-  - 子进程崩溃自动重启
-  - 线程安全（主进程端加锁，一次只发一个请求）
+Windows 上 selectors 不支持 pipe fd，改用线程读取 + Event 超时等待。
 """
 import json
 import logging
@@ -20,7 +10,6 @@ import sys
 import os
 import threading
 import time
-import selectors
 import base64
 
 logger = logging.getLogger(__name__)
@@ -124,6 +113,35 @@ if __name__=="__main__":
         logger.error(f"[browser] 写入 worker 脚本失败: {e}")
 
 
+def _readline_with_timeout(proc, timeout):
+    """
+    从子进程 stdout 读取一行，带超时。
+    Windows 上 selectors 不支持 pipe，改用线程 + Event。
+    """
+    result = [None]
+    event = threading.Event()
+
+    def _reader():
+        try:
+            line = proc.stdout.readline()
+            result[0] = line
+        except Exception:
+            result[0] = b""
+        event.set()
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+
+    if event.wait(timeout=timeout):
+        raw = result[0]
+        if raw is None:
+            return ""
+        return raw.decode("utf-8", errors="replace").strip()
+    else:
+        # 超时
+        return None
+
+
 def _start_worker():
     global _worker_proc, _worker_start_time, _request_count
     _ensure_worker_script()
@@ -135,20 +153,18 @@ def _start_worker():
         )
         _worker_start_time = time.time()
         _request_count = 0
+
         # 等待 ready（最多30秒）
-        sel = selectors.DefaultSelector()
-        sel.register(_worker_proc.stdout, selectors.EVENT_READ)
-        events = sel.select(timeout=30)
-        sel.unregister(_worker_proc.stdout)
-        sel.close()
-        if not events:
+        line = _readline_with_timeout(_worker_proc, 30)
+        if line is None:
             logger.error("[browser] Worker 启动超时")
             _kill_worker()
             return False
-        line = _worker_proc.stdout.readline().decode("utf-8", errors="replace").strip()
         if not line:
+            logger.error("[browser] Worker 无响应")
             _kill_worker()
             return False
+
         resp = json.loads(line)
         if resp.get("status") == "ready":
             logger.info("[browser] Chromium 常驻进程启动成功")
@@ -198,7 +214,7 @@ def fetch_page_html(url: str, timeout: int = 20,
                     wait_time: int = 2000) -> str:
     """
     用常驻 Playwright 子进程渲染页面，返回完整 HTML。
-    线程安全，子进程崩溃自动重启，Chromium 只启动一次。
+    Windows 兼容：用线程+Event替代selectors做超时读取。
     """
     global _request_count
     with _lock:
@@ -212,19 +228,14 @@ def fetch_page_html(url: str, timeout: int = 20,
             _worker_proc.stdin.write(req.encode("utf-8"))
             _worker_proc.stdin.flush()
 
-            # 读取响应（带超时）
-            sel = selectors.DefaultSelector()
-            sel.register(_worker_proc.stdout, selectors.EVENT_READ)
-            events = sel.select(timeout=timeout + 15)
-            sel.unregister(_worker_proc.stdout)
-            sel.close()
-            if not events:
+            # 读取响应元数据（带超时）
+            resp_line = _readline_with_timeout(_worker_proc, timeout + 15)
+            if resp_line is None:
                 logger.warning(f"[browser] 渲染超时: {url[:60]}")
                 _kill_worker()
                 return ""
-
-            resp_line = _worker_proc.stdout.readline().decode("utf-8", errors="replace").strip()
             if not resp_line:
+                logger.warning(f"[browser] Worker 无响应: {url[:60]}")
                 _kill_worker()
                 return ""
 
@@ -238,7 +249,7 @@ def fetch_page_html(url: str, timeout: int = 20,
                 return ""
 
             # 读取 HTML（base64 编码）
-            html_line = _worker_proc.stdout.readline().decode("ascii", errors="replace").strip()
+            html_line = _readline_with_timeout(_worker_proc, 10)
             if not html_line:
                 return ""
 
