@@ -172,6 +172,52 @@ def crawl_with_retry(name: str, mod: str,
     return CrawlResult(name, mod, [], Exception("超过最大重试次数"))
 
 
+# ==================== Playwright 渲染辅助函数 ====================
+
+# 缓存已加载的爬虫实例（避免重复实例化）
+_crawler_cache = {}
+
+
+def _get_crawler_instance(source: str):
+    """
+    根据站点 source 名获取对应的爬虫实例（用于调用 parse_detail）。
+    缓存实例避免重复加载。
+    """
+    if not source:
+        return None
+    if source in _crawler_cache:
+        return _crawler_cache[source]
+
+    # source 对应 SITES 中的 module 名
+    try:
+        # 先尝试直接用 source 作为 module 名
+        crawler = load_crawler(source)
+        _crawler_cache[source] = crawler
+        return crawler
+    except Exception:
+        pass
+
+    # 再尝试从 SITES 配置中查找匹配的 module
+    try:
+        for site in SITES:
+            if site.module == source or site.display_name == source:
+                crawler = load_crawler(site.module)
+                _crawler_cache[source] = crawler
+                return crawler
+    except Exception:
+        pass
+
+    return None
+
+
+def _get_wait_selector(source: str) -> str:
+    """根据站点获取 Playwright 等待的 CSS 选择器"""
+    crawler = _get_crawler_instance(source)
+    if crawler and hasattr(crawler, 'detail_selectors') and crawler.detail_selectors:
+        return crawler.detail_selectors[0]
+    return None
+
+
 # ==================== 单轮爬取主流程 ====================
 
 def run_single_crawl():
@@ -223,6 +269,88 @@ def run_single_crawl():
                 # 0 条结果不算失败（可能该站点确实无新内容），仅输出警告
                 logger.warning(f"  [WARN] {result.name}: 0 条（无新内容或被反爬）")
                 success_count += 1                         # 请求本身成功，不计入失败
+
+    # ---------- Playwright 统一批量渲染阶段 ----------
+    # 所有站点静态 HTTP 请求已完成，现在统一处理正文不足的条目
+    if all_results:
+        _MIN_CONTENT_LEN = 200  # 正文低于此长度视为不足，需要 Playwright 渲染
+        needs_render = [
+            item for item in all_results
+            if isinstance(item, dict)
+            and item.get("url")
+            and len((item.get("content") or "")) < _MIN_CONTENT_LEN
+        ]
+
+        if needs_render:
+            logger.info(f"[Playwright] 共 {len(needs_render)} 篇正文不足，开始统一批量渲染...")
+            try:
+                from utils.browser import fetch_pages_batch
+                # 为每个 URL 构建渲染配置（含对应站点的 wait_selector）
+                url_configs = []
+                for item in needs_render:
+                    # 根据 item 中的 source 字段找到对应爬虫的选择器
+                    wait_sel = _get_wait_selector(item.get("source", ""))
+                    url_configs.append({
+                        "url": item["url"],
+                        "wait_selector": wait_sel,
+                        "wait_time": 2000,
+                        "timeout": 20,
+                    })
+
+                rendered_pages = fetch_pages_batch(url_configs)
+
+                # 用渲染结果重新解析并合并
+                render_ok = 0
+                for item in needs_render:
+                    url = item.get("url", "")
+                    rendered_html = rendered_pages.get(url, "")
+                    if not rendered_html:
+                        continue
+                    try:
+                        # 用对应站点的 parse_detail 解析
+                        crawler_instance = _get_crawler_instance(item.get("source", ""))
+                        if crawler_instance:
+                            detail = crawler_instance.parse_detail(rendered_html, url)
+                        else:
+                            # 兜底：用通用提取器
+                            from utils.content_extractor import extract_content
+                            detail = extract_content(rendered_html, url)
+
+                        if isinstance(detail, dict):
+                            new_content = detail.get("content") or ""
+                            old_content = item.get("content") or ""
+                            if len(new_content) > len(old_content):
+                                # 合并结果
+                                item["content"] = new_content
+                                if detail.get("content_html"):
+                                    item["content_html"] = detail["content_html"]
+                                if detail.get("images"):
+                                    item["images"] = detail["images"]
+                                if detail.get("videos"):
+                                    item["videos"] = detail["videos"]
+                                if detail.get("thumbnail") and not item.get("thumbnail"):
+                                    item["thumbnail"] = detail["thumbnail"]
+                                if detail.get("author") and not item.get("author"):
+                                    item["author"] = detail["author"]
+                                if detail.get("pub_time") and not item.get("pub_time"):
+                                    item["pub_time"] = detail["pub_time"]
+                                render_ok += 1
+                    except Exception as e:
+                        logger.debug(f"[Playwright] 解析失败: {url[:60]} | {e}")
+
+                logger.info(f"[Playwright] 批量渲染完成: {render_ok}/{len(needs_render)} 篇补充正文")
+
+            except ImportError:
+                logger.debug("[Playwright] playwright 未安装，跳过渲染")
+            except Exception as e:
+                logger.warning(f"[Playwright] 批量渲染异常: {e}")
+
+            # 关闭 Playwright 浏览器，释放资源
+            try:
+                from utils.browser import close_browser
+                close_browser()
+            except Exception:
+                pass
 
     # ---------- 存储阶段 ----------
     if all_results:                                        # 如果本轮有爬取到数据

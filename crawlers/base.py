@@ -362,9 +362,8 @@ class BaseCrawler(ABC):
         返回 {"content", "content_html", "images", "videos", "thumbnail"}。
         子类可重写此方法实现自定义逻辑。
 
-        流程：
-        1. 先用 requests 发静态HTTP请求（快速，低资源）
-        2. 如果正文不足100字（说明JS渲染问题），用 Playwright 浏览器渲染重试
+        注意：此方法只做静态HTTP请求，不调用 Playwright。
+        正文不足的条目会在 main.py 中统一批量 Playwright 渲染。
         """
         if not isinstance(item, dict):
             return {}
@@ -372,90 +371,16 @@ class BaseCrawler(ABC):
         if not url or not isinstance(url, str):
             return {}
 
-        _MIN_CONTENT_LEN = 100  # 正文最低有效长度（低于此值触发Playwright）
-
-        # --- 阶段1: 静态HTTP请求（快速）---
         result = {}
         try:
             resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
             if resp is not None:
                 html = resp.text if resp.text else ""
                 result = self.parse_detail(html, url)
-                if isinstance(result, dict) and len((result.get("content") or "")) >= _MIN_CONTENT_LEN:
-                    return result
         except Exception as e:
             self.logger.debug(f"[{self.name}] 静态请求失败: {url[:60]} | {e}")
 
-        # --- 阶段2: Playwright浏览器渲染（正文不足时自动触发）---
-        try:
-            from utils.browser import fetch_page_html
-            wait_sel = None
-            if self.detail_selectors:
-                wait_sel = self.detail_selectors[0]
-            # timeout=12秒，wait_time=1500ms，总计约13.5秒/篇
-            rendered_html = fetch_page_html(
-                url, timeout=12,
-                wait_selector=wait_sel, wait_time=1500,
-            )
-            if rendered_html:
-                rendered_result = self.parse_detail(rendered_html, url)
-                if isinstance(rendered_result, dict):
-                    new_content = rendered_result.get("content") or ""
-                    old_content = (result.get("content") or "") if isinstance(result, dict) else ""
-                    if len(new_content) > len(old_content):
-                        self.logger.info(f"[{self.name}] Playwright 渲染成功: {url[:60]}")
-                        return rendered_result
-        except ImportError:
-            pass  # Playwright 未安装，跳过
-        except Exception as e:
-            self.logger.debug(f"[{self.name}] Playwright 渲染失败: {url[:60]} | {e}")
-
         return result if isinstance(result, dict) else {}
-
-    def _playwright_fallback(self, url: str, existing_result: dict = None) -> dict:
-        """
-        Playwright 浏览器渲染兜底。
-        当静态HTTP请求无法获取完整正文时，子类的 fetch_detail 可调用此方法。
-        只有正文不足100字时才会触发 Playwright 渲染。
-
-        参数:
-            url: 文章 URL
-            existing_result: 静态请求已获取的部分结果（用于比较正文长度）
-
-        返回:
-            渲染后提取的 dict 结果，或传入的 existing_result
-        """
-        _MIN_CONTENT_LEN = 100
-
-        if not existing_result:
-            existing_result = {}
-        old_content = existing_result.get("content") or "" if isinstance(existing_result, dict) else ""
-
-        # 正文已足够长，不需要 Playwright
-        if len(old_content) >= _MIN_CONTENT_LEN:
-            return existing_result
-
-        try:
-            from utils.browser import fetch_page_html
-            wait_sel = self.detail_selectors[0] if self.detail_selectors else None
-            # timeout=12秒（页面加载10秒+JS渲染1.5秒+通信开销），wait_time=1500ms
-            rendered_html = fetch_page_html(
-                url, timeout=12,
-                wait_selector=wait_sel, wait_time=1500,
-            )
-            if rendered_html:
-                rendered_result = self.parse_detail(rendered_html, url)
-                if isinstance(rendered_result, dict):
-                    new_content = rendered_result.get("content") or ""
-                    if len(new_content) > len(old_content):
-                        self.logger.info(f"[{self.name}] Playwright 渲染成功: {url[:60]}")
-                        return rendered_result
-        except ImportError:
-            pass
-        except Exception as e:
-            self.logger.debug(f"[{self.name}] Playwright 渲染失败: {url[:60]} | {e}")
-
-        return existing_result
 
     def parse_detail(self, html: str, url: str) -> dict:
         """
@@ -466,8 +391,12 @@ class BaseCrawler(ABC):
         return extract_content(html, url, selectors=self.detail_selectors)
 
     def _fetch_all_details(self, items: list) -> list:
-        """并发抓取所有条目的详情页，合并到 items 中。
-        已在 DB 中有正文的条目会跳过，避免重复抓取。"""
+        """
+        并发抓取所有条目的详情页（纯静态HTTP，不触发Playwright）。
+        已在 DB 中有正文的条目会跳过，避免重复抓取。
+
+        Playwright 渲染由 main.py 在所有站点完成后统一批量执行。
+        """
         if not items:
             return items
 
@@ -484,17 +413,12 @@ class BaseCrawler(ABC):
 
         items_to_fetch = [item for item in items if item.get("url", "") not in skip_urls]
         items_skipped = [item for item in items if item.get("url", "") in skip_urls]
+        # 标记被跳过的条目（DB中已有正文），便于 run() 中准确统计
+        for item in items_skipped:
+            item["_skipped_has_content"] = True
 
-        def _fetch_one(item):
-            if not isinstance(item, dict):
-                return item
-            try:
-                detail = self.fetch_detail(item)
-            except Exception as e:
-                self.logger.warning(f"[{self.name}] fetch_detail 异常: "
-                                    f"{item.get('url', '')[:60]} | {e}")
-                detail = {}
-
+        def _merge_detail(item, detail):
+            """将详情结果合并到条目中"""
             if not isinstance(detail, dict) or not detail:
                 return item
 
@@ -550,6 +474,20 @@ class BaseCrawler(ABC):
 
             return item
 
+        def _fetch_one(item):
+            """静态HTTP请求获取详情页"""
+            if not isinstance(item, dict):
+                return item
+            try:
+                detail = self.fetch_detail(item)
+            except Exception as e:
+                self.logger.warning(f"[{self.name}] fetch_detail 异常: "
+                                    f"{item.get('url', '')[:60]} | {e}")
+                detail = {}
+
+            return _merge_detail(item, detail)
+
+        # 并发静态HTTP请求
         results = list(items_skipped)  # 已跳过的保持原样
 
         if items_to_fetch:
@@ -593,8 +531,16 @@ class BaseCrawler(ABC):
         if self.enable_detail and results:
             self.logger.info(f"[{self.name}] 开始抓取详情页...")
             results = self._fetch_all_details(results)
+            # 统计有正文的条目（含本次抓取 + DB中已有正文被跳过的）
             detail_ok = sum(1 for r in results if r.get("content"))
-            self.logger.info(f"[{self.name}] 详情页完成: {detail_ok}/{len(results)} 篇有正文")
+            detail_skipped = sum(1 for r in results if r.get("_skipped_has_content"))
+            if detail_skipped:
+                self.logger.info(
+                    f"[{self.name}] 详情页完成: "
+                    f"{detail_ok}(新抓)+{detail_skipped}(已有)/{len(results)} 篇有正文"
+                )
+            else:
+                self.logger.info(f"[{self.name}] 详情页完成: {detail_ok}/{len(results)} 篇有正文")
 
             # 下载图片到本地
             self._download_images(results)

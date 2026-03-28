@@ -40,7 +40,10 @@ _CHANNEL_PAGES = [
 class JiemianCrawler(BaseCrawler):
 
     detail_selectors = [
-        ".article-content",       # 正文主体（最常见）
+        "div.article-content",    # 正文主体（当前版本，最常见）
+        ".article-content",       # 不带标签版本
+        ".article-main .article-content",  # 带父容器限定
+        ".pure-article-wrapper-box .article-content",  # 沉浸式阅读模式
         ".article-main",          # 正文外层容器
         ".article-view",          # 沉浸式阅读模式
         "#article_detail",        # 旧版详情页
@@ -94,11 +97,25 @@ class JiemianCrawler(BaseCrawler):
 
     def parse_detail(self, html: str, url: str) -> dict:
         """界面新闻详情页解析：通用提取器 + 作者/时间补充"""
+        if not html:
+            from utils.content_extractor import extract_content
+            return extract_content("", url, selectors=self.detail_selectors)
+
+        # 预处理：移除界面新闻广告/推广元素（在提取之前清理）
+        try:
+            soup_pre = BeautifulSoup(html, "lxml")
+            # 删除文章内广告
+            for sel in (".article-content__ad", ".article-ad", ".ad-wrap",
+                        ".recommend-wrap", ".article-recommend",
+                        ".article-keywords", ".article-share"):
+                for el in soup_pre.select(sel):
+                    el.decompose()
+            html = str(soup_pre)
+        except Exception:
+            pass
+
         from utils.content_extractor import extract_content
         result = extract_content(html, url, selectors=self.detail_selectors)
-
-        if not html:
-            return result
 
         try:
             soup = BeautifulSoup(html, "lxml")

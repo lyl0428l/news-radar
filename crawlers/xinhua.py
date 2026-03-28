@@ -64,12 +64,26 @@ def _extract_xinhua_article_id(url: str) -> str:
 class XinhuaCrawler(BaseCrawler):
 
     detail_selectors = [
-        "#detail", "#detailContent", "#detailMain",
-        ".detail", ".article-content", ".article",
-        ".main-article", ".main_content", ".content",
-        "#article", ".newsContent", ".news-content",
-        ".ht-content", ".content_area",
-        "[class*='detail']", "[class*='article']",
+        "span#detailContent",     # 当前版本正文容器（<span id="detailContent">）
+        "#detailContent",         # 不带标签版本
+        "#detail",                # 新版详情页外层（<div id="detail">）
+        ".main-left #detail",     # 带父容器限定
+        ".domPC #detail",         # 桌面端限定（新华网用 .domPC/.domMobile 区分）
+        "#detailMain",            # 旧版详情页
+        ".detail",                # class 版本
+        ".detail-content",        # 备用
+        ".article-content",       # 通用
+        ".article",               # 通用
+        ".main-article",          # 备用
+        ".main_content",          # 备用
+        ".content",               # 通用
+        "#article",               # 备用
+        ".newsContent",           # 备用
+        ".news-content",          # 备用
+        ".ht-content",            # 备用
+        ".content_area",          # 备用
+        "[class*='detail']",      # 模糊匹配
+        "[class*='article']",     # 模糊匹配
     ]
 
     def __init__(self):
@@ -82,16 +96,49 @@ class XinhuaCrawler(BaseCrawler):
     #  列表获取
     # ================================================================
 
+    # 新华网频道页列表（首页不足 10 条时从频道页补充）
+    _CHANNEL_URLS = [
+        "https://www.news.cn/politics/",
+        "https://www.news.cn/world/",
+        "https://www.news.cn/finance/",
+    ]
+
     def crawl(self) -> list[dict]:
         results = []
-        resp = self._request("https://www.news.cn/")
+        seen = set()
+        rank = 1
+
+        # --- 来源1: 首页 ---
+        rank = self._extract_links_from_page(
+            "https://www.news.cn/", results, seen, rank, category="头条"
+        )
+
+        # --- 来源2: 频道页补充（首页不足 10 条时） ---
+        if rank <= 10:
+            for channel_url in self._CHANNEL_URLS:
+                if rank > 10:
+                    break
+                rank = self._extract_links_from_page(
+                    channel_url, results, seen, rank, category="频道"
+                )
+
+        return results
+
+    def _extract_links_from_page(
+        self, page_url: str, results: list, seen: set,
+        start_rank: int, category: str = "头条",
+    ) -> int:
+        """
+        从指定页面提取新闻链接，追加到 results。
+        返回下一个可用的 rank 值。
+        """
+        rank = start_rank
+        resp = self._request(page_url)
         if resp is None:
-            return results
+            return rank
         try:
             resp.encoding = "utf-8"
             soup = BeautifulSoup(resp.text, "lxml")
-            rank = 1
-            seen = set()
             for a in soup.find_all("a", href=True):
                 href = _safe_str(a.get("href"))
                 title = a.get_text(strip=True)
@@ -105,14 +152,14 @@ class XinhuaCrawler(BaseCrawler):
                     continue
                 seen.add(href)
                 results.append(self._make_item(
-                    title=title, url=href, rank=rank, category="头条"
+                    title=title, url=href, rank=rank, category=category
                 ))
                 rank += 1
                 if rank > 10:
                     break
         except Exception as e:
-            self.logger.warning(f"[xinhua] HTML 解析失败: {e}")
-        return results
+            self.logger.warning(f"[xinhua] {page_url} 解析失败: {e}")
+        return rank
 
     # ================================================================
     #  详情页：多策略提取完整正文
@@ -120,11 +167,9 @@ class XinhuaCrawler(BaseCrawler):
 
     def fetch_detail(self, item: dict) -> dict:
         """
-        新华网详情页抓取。
-        策略1: 用移动端UA请求原始URL（新华网对移动端返回更完整的静态HTML）
-        策略2: 用PC端UA请求原始URL
-        策略3: readability兜底
-        不再尝试API和m.news.cn域名（经实测均404）
+        新华网详情页抓取（纯静态HTTP）。
+        策略1: PC端UA请求原始URL（新华网是SSR，完整正文在首次HTML中）
+        策略2: 移动端UA请求原始URL（备用，部分页面对移动端返回更简洁的HTML）
         """
         if not isinstance(item, dict):
             return {}
@@ -134,36 +179,50 @@ class XinhuaCrawler(BaseCrawler):
 
         from config import DETAIL_FETCH_TIMEOUT
 
+        pc_headers = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/131.0.0.0 Safari/537.36"),
+            "Referer": "https://www.news.cn/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
+
         mobile_ua = (
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
             "AppleWebKit/605.1.15 (KHTML, like Gecko) "
             "Version/17.0 Mobile/15E148 Safari/604.1"
         )
 
-        # --- 策略1: 移动端UA请求原始URL ---
-        try:
-            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT,
-                                 headers={"User-Agent": mobile_ua})
-            if resp is not None:
-                result = self.parse_detail(resp.text, url)
-                if len(_safe_str(result.get("content"))) >= 100:
-                    return result
-        except Exception as e:
-            self.logger.debug(f"[xinhua] 移动端UA请求失败: {url[:60]} | {e}")
-
-        # --- 策略2: PC端UA请求 ---
+        # --- 策略1: PC端UA请求（优先，新华网SSR正文完整） ---
         result = {}
         try:
-            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT,
+                                 headers=pc_headers)
             if resp is not None:
+                # 新华网统一 UTF-8 编码
+                resp.encoding = "utf-8"
                 result = self.parse_detail(resp.text, url)
                 if len(_safe_str(result.get("content"))) >= 100:
                     return result
         except Exception as e:
             self.logger.debug(f"[xinhua] PC端请求失败: {url[:60]} | {e}")
 
-        # --- 策略3: Playwright 浏览器渲染兜底 ---
-        return self._playwright_fallback(url, result)
+        # --- 策略2: 移动端UA请求 ---
+        try:
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT,
+                                 headers={"User-Agent": mobile_ua,
+                                          "Referer": "https://www.news.cn/"})
+            if resp is not None:
+                resp.encoding = "utf-8"
+                m_result = self.parse_detail(resp.text, url)
+                if len(_safe_str(m_result.get("content"))) > len(_safe_str(result.get("content"))):
+                    result = m_result
+        except Exception as e:
+            self.logger.debug(f"[xinhua] 移动端UA请求失败: {url[:60]} | {e}")
+
+        # Playwright 渲染由 main.py 统一批量处理
+        return result
 
     def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
         """
@@ -304,6 +363,18 @@ class XinhuaCrawler(BaseCrawler):
         if not html or not isinstance(html, str):
             from utils.content_extractor import extract_content
             return extract_content("", url, selectors=self.detail_selectors)
+
+        # 预处理：移除编辑标记和移动端隐藏元素
+        try:
+            soup_pre = BeautifulSoup(html, "lxml")
+            # 移除责任编辑标记
+            for sel in ("#articleEdit", ".editor", ".domMobile",
+                        ".article-source", ".share-bar"):
+                for el in soup_pre.select(sel):
+                    el.decompose()
+            html = str(soup_pre)
+        except Exception:
+            pass
 
         from utils.content_extractor import extract_content
         result = extract_content(html, url, selectors=self.detail_selectors)

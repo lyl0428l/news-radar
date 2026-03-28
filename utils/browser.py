@@ -18,9 +18,9 @@ _WORKER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_rend
 _lock = threading.Lock()
 _worker_proc = None
 _worker_start_time = 0
-_MAX_WORKER_AGE = 3600
+_MAX_WORKER_AGE = 7200  # 2小时（延长worker生命周期，减少重启开销）
 _request_count = 0
-_MAX_REQUESTS = 100
+_MAX_REQUESTS = 200     # 提高到200次请求再重启
 
 
 def _ensure_worker_script():
@@ -75,16 +75,17 @@ def main():
                 page.route("**/*doubleclick*",lambda r:r.abort())
                 page.route("**/*adservice*",lambda r:r.abort())
                 page.route("**/*adsense*",lambda r:r.abort())
-                # 页面加载超时固定10秒（够JS渲染正文）
-                page.goto(url,wait_until="domcontentloaded",timeout=10000)
-                # 等待正文容器出现（最多3秒）
+                # 页面加载超时使用传入的timeout（秒→毫秒，下限10秒）
+                page_timeout = max(timeout * 1000, 10000)
+                page.goto(url,wait_until="domcontentloaded",timeout=page_timeout)
+                # 等待正文容器出现（最多5秒）
                 if ws:
                     try:
-                        page.wait_for_selector(ws,timeout=3000)
+                        page.wait_for_selector(ws,timeout=5000)
                     except:
                         pass
-                # JS渲染等待1.5秒（够大部分框架完成渲染）
-                page.wait_for_timeout(1500)
+                # JS渲染等待（使用传入的wait_time，下限1500ms）
+                page.wait_for_timeout(max(wt, 1500))
                 html = page.content()
                 page.close()
                 ctx.close()
@@ -235,8 +236,8 @@ def fetch_page_html(url: str, timeout: int = 20,
             _worker_proc.stdin.write(req.encode("utf-8"))
             _worker_proc.stdin.flush()
 
-            # 读取响应元数据（带超时，页面10秒+JS1.5秒+通信余量3.5秒=15秒）
-            resp_line = _readline_with_timeout(_worker_proc, timeout + 5)
+            # 读取响应元数据（带超时，页面15秒+JS2秒+容器等待5秒+通信余量3秒=25秒）
+            resp_line = _readline_with_timeout(_worker_proc, timeout + 10)
             if resp_line is None:
                 logger.warning(f"[browser] 渲染超时: {url[:60]}")
                 _kill_worker()
@@ -268,6 +269,50 @@ def fetch_page_html(url: str, timeout: int = 20,
             logger.warning(f"[browser] 通信异常: {url[:60]} | {e}")
             _kill_worker()
             return ""
+
+
+def fetch_pages_batch(url_configs: list) -> dict:
+    """
+    批量渲染多个页面，返回 {url: html_str} 的字典。
+    所有 URL 串行渲染（共用同一个 Chromium 实例），避免并发竞争。
+
+    参数:
+        url_configs: [{"url": str, "wait_selector": str|None, "wait_time": int}, ...]
+
+    返回:
+        {url: html_str}  渲染成功的页面 HTML
+    """
+    results = {}
+    if not url_configs:
+        return results
+
+    total = len(url_configs)
+    logger.info(f"[browser] 批量渲染开始: {total} 个页面")
+
+    for i, config in enumerate(url_configs, 1):
+        url = config.get("url", "")
+        if not url:
+            continue
+        wait_selector = config.get("wait_selector")
+        wait_time = config.get("wait_time", 2000)
+        timeout = config.get("timeout", 20)
+        try:
+            html = fetch_page_html(
+                url, timeout=timeout,
+                wait_selector=wait_selector,
+                wait_time=wait_time,
+            )
+            if html and len(html) > 500:
+                results[url] = html
+            # 每 10 页或最后一页输出进度
+            if i % 10 == 0 or i == total:
+                logger.info(f"[browser] 渲染进度: {i}/{total} (成功 {len(results)})")
+        except Exception as e:
+            logger.debug(f"[browser] 批量渲染单页失败: {url[:60]} | {e}")
+            continue
+
+    logger.info(f"[browser] 批量渲染完成: {len(results)}/{total} 成功")
+    return results
 
 
 def close_browser():

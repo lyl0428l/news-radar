@@ -328,15 +328,22 @@ def extract_content(html: str, url: str, selectors: list = None) -> dict:
 
     # --- 第二步：定位正文容器 ---
     content_el = None
+    # 保留短文本的备选容器（选择器匹配但文本 <= 100 字符的情况）
+    _short_content_el = None
 
     # 2a. 尝试指定的 CSS 选择器
     if selectors:
         for sel in selectors:
             try:
-                content_el = soup.select_one(sel)
-                if content_el and len(content_el.get_text(strip=True)) > 100:
-                    break
-                content_el = None
+                el = soup.select_one(sel)
+                if el:
+                    text_len = len(el.get_text(strip=True))
+                    if text_len > 100:
+                        content_el = el
+                        break
+                    elif text_len > 0 and _short_content_el is None:
+                        # 记住第一个有文本但较短的匹配（短新闻/快讯）
+                        _short_content_el = el
             except Exception:
                 continue
 
@@ -344,9 +351,16 @@ def extract_content(html: str, url: str, selectors: list = None) -> dict:
     if content_el is None:
         readable_html = _extract_readability_html(html, url)
         if readable_html:
-            content_el = BeautifulSoup(readable_html, "lxml").body
-            if content_el is None:
-                content_el = BeautifulSoup(readable_html, "lxml")
+            readable_el = BeautifulSoup(readable_html, "lxml").body
+            if readable_el is None:
+                readable_el = BeautifulSoup(readable_html, "lxml")
+            # readability 提取到有效文本才使用，否则回退到短文本容器
+            if readable_el and len(readable_el.get_text(strip=True)) > 0:
+                content_el = readable_el
+
+    # 2c. 如果 readability 也没有结果，使用短文本容器（短新闻/快讯场景）
+    if content_el is None and _short_content_el is not None:
+        content_el = _short_content_el
 
     if content_el is None:
         return result

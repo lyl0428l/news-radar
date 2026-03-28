@@ -2,16 +2,16 @@
 腾讯新闻爬虫 - 爬取腾讯新闻热榜 TOP 10
 
 正文获取策略（按优先级）：
-  1. 腾讯新闻内容 API（直接返回 JSON，含完整正文 HTML）
-     https://r.inews.qq.com/gw/article/detail?id={article_id}
-  2. window.__INITIAL_STATE__ JS 变量
-  3. <script id="initial-data"> 内联 JSON
-  4. JSON-LD 结构化数据
-  5. 通用 readability 提取器（兜底）
+  1. view.inews.qq.com 用PC端UA请求 → 302重定向到 news.qq.com/rain/a/...
+     重定向后的页面包含完整SSR正文HTML（.content-article 容器）
+  2. window.__INITIAL_STATE__ JS 变量（旧版页面兜底）
+  3. JSON-LD 结构化数据（旧版页面兜底）
+  4. 通用 readability 提取器（最终兜底）
 
-图片：从正文 HTML 中提取，补充 og:image
-视频：从 videoInfo 字段提取，嵌入正文顶部
-作者：mediaName / author 字段
+注意：
+  - 移动端UA请求 view.inews.qq.com 返回纯JS SPA壳，完全无正文
+  - PC端UA请求会自动重定向，利用服务端渲染（SSR）获取完整HTML
+  - __INITIAL_STATE__ 在当前版本腾讯新闻页面中已不存在
 """
 import re
 import json
@@ -21,18 +21,6 @@ from bs4 import BeautifulSoup
 from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 logger = logging.getLogger(__name__)
-
-# 腾讯新闻内容 API
-# 实测日志证明 r.inews.qq.com/gw/event/article 对所有ID格式均404
-# 改用以下接口（均基于 new.qq.com 域名）：
-_TENCENT_DETAIL_APIS = [
-    # PC端文章详情接口
-    "https://new.qq.com/rain/api/detail",
-    # 腾讯新闻 SSR 数据接口
-    "https://new.qq.com/api/detail",
-    # 腾讯新闻内容网关（不同路径）
-    "https://r.inews.qq.com/gw/article/detail",
-]
 
 
 def _safe_str(val, default="") -> str:
@@ -59,21 +47,6 @@ def _safe_dict(val) -> dict:
     return {}
 
 
-def _extract_article_id(url: str) -> str:
-    """从腾讯新闻 URL 提取文章 ID"""
-    if not url:
-        return ""
-    # https://new.qq.com/rain/a/20240301A01234 → 20240301A01234
-    m = re.search(r'/rain/a/([A-Za-z0-9]+)', url)
-    if m:
-        return m.group(1)
-    # https://new.qq.com/omn/20240301/20240301A01234.html → 20240301A01234
-    m = re.search(r'/(\w{14,20})(?:\.html)?$', url)
-    if m:
-        return m.group(1)
-    return ""
-
-
 class TencentCrawler(BaseCrawler):
 
     detail_selectors = [
@@ -92,12 +65,36 @@ class TencentCrawler(BaseCrawler):
     #  列表获取
     # ================================================================
 
+    @staticmethod
+    def _is_valid_article_url(url: str, title: str) -> bool:
+        """
+        过滤非文章URL：
+        - TIP 开头的ID是专题/引导页（重定向到 babyhome.htm）
+        - 包含 babyhome/babygohome 的是腾讯新闻 App 下载页
+        - 标题含特定关键词的是站点导航
+        """
+        if not url:
+            return False
+        url_lower = url.lower()
+        title_lower = title.lower() if title else ""
+        # 专题引导页
+        if "/rain/a/TIP" in url or "/a/TIP" in url:
+            return False
+        if "babyhome" in url_lower or "babygohome" in url_lower:
+            return False
+        # 非新闻标题
+        if title in ("腾讯新闻", "腾讯网"):
+            return False
+        if "热点精选" in title_lower or "每10分钟更新" in title_lower:
+            return False
+        return True
+
     def crawl(self) -> list[dict]:
         results = []
 
-        # 腾讯新闻热点精选 API
+        # 腾讯新闻热点精选 API（多请求11条，过滤后保证10条）
         api_url = "https://i.news.qq.com/gw/event/pc_hot_ranking_list"
-        params = {"ids_hash": "", "offset": 0, "page_size": 10}
+        params = {"ids_hash": "", "offset": 0, "page_size": 20}
         resp = self._request(api_url, params=params)
         if resp:
             try:
@@ -119,7 +116,7 @@ class TencentCrawler(BaseCrawler):
                             url = f"https://new.qq.com/rain/a/{article_id}"
                     if not url or not url.startswith("http"):
                         continue
-                    if title in ("腾讯新闻", "腾讯网") or "热点精选" in title:
+                    if not self._is_valid_article_url(url, title):
                         continue
                     results.append(self._make_item(
                         title=title, url=url, rank=rank,
@@ -138,7 +135,7 @@ class TencentCrawler(BaseCrawler):
         try:
             resp2 = self._request(
                 "https://i.news.qq.com/gw/event/hot_ranking_list",
-                params={"offset": 0, "page_size": 10, "rank_type": 1},
+                params={"offset": 0, "page_size": 20, "rank_type": 1},
             )
             if resp2:
                 data2 = resp2.json()
@@ -153,7 +150,7 @@ class TencentCrawler(BaseCrawler):
                     url = _safe_str(item.get("url") or item.get("surl"))
                     if not title or not url or not url.startswith("http"):
                         continue
-                    if title in ("腾讯新闻", "腾讯网"):
+                    if not self._is_valid_article_url(url, title):
                         continue
                     results.append(self._make_item(
                         title=title, url=url, rank=rank,
@@ -175,10 +172,14 @@ class TencentCrawler(BaseCrawler):
     def fetch_detail(self, item: dict) -> dict:
         """
         腾讯新闻详情页抓取。
-        策略1: 移动端UA请求（腾讯移动端HTML包含更完整的内联JSON数据）
-        策略2: PC端UA请求 + JS变量/JSON-LD提取
-        策略3: readability兜底
-        不再尝试API（经实测r.inews.qq.com和new.qq.com的API对所有ID格式均404）
+
+        核心策略：PC端UA + 跟随重定向
+        - view.inews.qq.com 会 302 重定向到 news.qq.com/rain/a/...
+        - 重定向后的页面是SSR渲染，包含完整正文HTML（.content-article容器）
+        - 不使用移动端UA（移动端返回纯JS SPA壳，无任何正文）
+        - 必须显式设置 PC UA，否则 _request 的随机 UA 可能命中移动端 UA
+
+        不再尝试内容API（经实测r.inews.qq.com和new.qq.com的API对所有ID格式均404）
         """
         if not isinstance(item, dict):
             return {}
@@ -188,161 +189,63 @@ class TencentCrawler(BaseCrawler):
 
         from config import DETAIL_FETCH_TIMEOUT
 
-        # --- 策略1: 移动端UA请求（移动端页面内嵌更多JSON数据）---
-        mobile_ua = (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-            "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-            "Version/17.0 Mobile/15E148 Safari/604.1"
-        )
-        try:
-            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT,
-                                 headers={"User-Agent": mobile_ua})
-            if resp is not None:
-                result = self.parse_detail(resp.text, url)
-                if result and len(_safe_str(result.get("content"))) >= 100:
-                    return result
-        except Exception as e:
-            self.logger.debug(f"[tencent] 移动端请求失败: {url[:60]} | {e}")
+        # 显式 PC 端 UA + Referer（关键：view.inews.qq.com 必须用桌面UA触发302重定向）
+        pc_headers = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/131.0.0.0 Safari/537.36"),
+            "Referer": "https://news.qq.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        }
 
-        # --- 策略2: PC端UA请求 ---
         result = {}
         try:
-            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT,
+                                 headers=pc_headers)
             if resp is not None:
-                result = self.parse_detail(resp.text, url)
-                if result and len(_safe_str(result.get("content"))) >= 100:
-                    return result
+                resp.encoding = "utf-8"
+                # 获取最终URL（可能经过302重定向）
+                final_url = getattr(resp, "url", url) or url
+                result = self.parse_detail(resp.text, final_url)
+
+                # 如果 view.inews.qq.com 没有重定向且正文为空，
+                # 主动构造 new.qq.com/rain/a/ URL 重试
+                if (len(_safe_str(result.get("content"))) < 50
+                        and "view.inews.qq.com" in url):
+                    rain_url = self._convert_to_rain_url(url)
+                    if rain_url and rain_url != url:
+                        resp2 = self._request(rain_url, timeout=DETAIL_FETCH_TIMEOUT,
+                                              headers=pc_headers)
+                        if resp2 is not None:
+                            resp2.encoding = "utf-8"
+                            result2 = self.parse_detail(resp2.text, rain_url)
+                            if len(_safe_str(result2.get("content"))) > len(
+                                    _safe_str(result.get("content"))):
+                                result = result2
         except Exception as e:
-            self.logger.debug(f"[tencent] PC端请求失败: {url[:60]} | {e}")
+            self.logger.debug(f"[tencent] 请求失败: {url[:60]} | {e}")
 
-        # --- 策略3: Playwright 浏览器渲染兜底 ---
-        return self._playwright_fallback(url, result)
-
-    def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
-        """
-        通过腾讯新闻内容 API 获取完整文章数据。
-        每个 API 只尝试一次（不走 _request 的重试机制），
-        404 立即跳下一个，避免大量无效重试拖慢速度。
-        """
-        import requests as _requests
-        headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-                          "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            "Referer": "https://new.qq.com/",
-        }
-        param_variants = [
-            {"id": article_id},
-            {"artid": article_id},
-        ]
-        session = self._get_session()
-        for api_url in _TENCENT_DETAIL_APIS:
-            for params in param_variants:
-                try:
-                    resp = session.get(api_url, params=params,
-                                       headers=headers, timeout=timeout)
-                    if resp.status_code in (404, 400, 403):
-                        break  # 该接口不支持此ID，换下一个API
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.json()
-                    if not isinstance(data, dict):
-                        continue
-                    article = (
-                        _safe_dict(data.get("article"))
-                        or _safe_dict(data.get("data", {}).get("article"))
-                        or _safe_dict(data.get("data"))
-                        or _safe_dict(data.get("newsInfo"))
-                        or {}
-                    )
-                    if not article and (data.get("content") or data.get("articleContent")):
-                        article = data
-                    if article:
-                        r = self._parse_api_article(article, url)
-                        if r and len(_safe_str(r.get("content"))) > 100:
-                            self.logger.info(f"[tencent] API成功: {api_url}")
-                            return r
-                except Exception as e:
-                    self.logger.debug(f"[tencent] API {api_url} 异常: {e}")
-                    break
-        return {}
-
-    def _parse_api_article(self, article: dict, url: str) -> dict:
-        """解析腾讯新闻 API 返回的文章数据"""
-        result = {
-            "content_html": "", "content": "", "images": [],
-            "videos": [], "thumbnail": "", "author": "", "pub_time": "",
-        }
-        if not isinstance(article, dict):
-            return result
-
-        # 正文 HTML（API 直接返回完整 HTML）
-        content_html = _safe_str(
-            article.get("content") or article.get("articleContent")
-            or article.get("body") or article.get("contentHtml")
-        )
-        if content_html:
-            try:
-                from utils.content_extractor import sanitize_html
-                content_html = sanitize_html(content_html)
-            except Exception:
-                pass
-            result["content_html"] = content_html
-            # 提取纯文本
-            try:
-                csoup = BeautifulSoup(content_html, "lxml")
-                # 提取图片
-                seen = set()
-                for img in csoup.find_all("img"):
-                    src = _safe_str(img.get("src") or img.get("data-src"))
-                    if src and src.startswith("http") and src not in seen:
-                        seen.add(src)
-                        result["images"].append({
-                            "url": src,
-                            "caption": _safe_str(img.get("alt")),
-                            "in_content": True,
-                        })
-                content_text = re.sub(r"\n\s*\n", "\n\n",
-                                      csoup.get_text(separator="\n")).strip()
-                result["content"] = content_text
-            except Exception as e:
-                self.logger.debug(f"[tencent] 正文解析异常: {e}")
-
-        # 作者
-        result["author"] = _safe_str(
-            article.get("mediaName") or article.get("author")
-            or article.get("authorName") or article.get("source")
-        )
-
-        # 发布时间
-        pub_time = _safe_str(
-            article.get("pubTime") or article.get("publishTime")
-            or article.get("ctime") or article.get("updateTime")
-        )
-        result["pub_time"] = pub_time
-
-        # 缩略图
-        thumbnail = article.get("thumbnails") or article.get("thumbnail") or article.get("picUrl") or ""
-        if isinstance(thumbnail, list) and thumbnail:
-            thumbnail = thumbnail[0]
-        if isinstance(thumbnail, dict):
-            thumbnail = thumbnail.get("url", "")
-        result["thumbnail"] = _safe_str(thumbnail)
-        if not result["thumbnail"] and result["images"]:
-            result["thumbnail"] = result["images"][0]["url"]
-
-        # 视频
-        video_info = _safe_dict(article.get("videoInfo") or article.get("video"))
-        if video_info:
-            vid_url = _safe_str(video_info.get("playUrl") or video_info.get("url"))
-            poster = _safe_str(video_info.get("coverUrl") or video_info.get("poster"))
-            if vid_url:
-                vtype = "m3u8" if ".m3u8" in vid_url else "mp4"
-                result["videos"].append({
-                    "url": vid_url, "type": vtype,
-                    "poster": poster, "in_content": True,
-                })
-
+        # Playwright 渲染由 main.py 统一批量处理
         return result
+
+    @staticmethod
+    def _convert_to_rain_url(url: str) -> str:
+        """将 view.inews.qq.com URL 转换为 new.qq.com/rain/a/ URL"""
+        if not url:
+            return ""
+        # view.inews.qq.com/a/{article_id} → new.qq.com/rain/a/{article_id}
+        parsed = urlparse(url)
+        path = parsed.path  # e.g. /a/20260328A01234
+        if path.startswith("/a/"):
+            article_id = path[3:].strip("/")
+            if article_id:
+                return f"https://new.qq.com/rain/a/{article_id}"
+        # 也可能是 /w/{id} 格式
+        m = re.search(r'/[aw]/([A-Za-z0-9]+)', path)
+        if m:
+            return f"https://new.qq.com/rain/a/{m.group(1)}"
+        return ""
 
     def parse_detail(self, html: str, url: str) -> dict:
         """从页面 HTML 多路提取正文，API 不可用时的回退方案"""

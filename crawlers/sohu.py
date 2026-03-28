@@ -42,10 +42,23 @@ def _safe_list(val) -> list:
 class SohuCrawler(BaseCrawler):
 
     detail_selectors = [
-        ".article", "article.article", "#article-container", "#mp-editor",
-        ".article-content", "#articleContent", ".news-content",
-        ".article_content", ".text", ".post-content",
-        "[class*='article']", "[class*='content']", ".main-content",
+        "article#mp-editor",      # 当前版本最精确（<article class="article" id="mp-editor">）
+        "article.article",        # 带类名的文章标签
+        "#mp-editor",             # 自媒体文章编辑器容器
+        ".left.main .text article",  # 带父容器路径
+        ".article",               # 文章通用
+        "#article-container .article",  # 文章容器内的文章
+        "#article-container",     # 文章容器
+        ".article-content",       # 文章内容
+        "#articleContent",        # 备用
+        ".news-content",          # 新闻内容
+        ".article_content",       # 下划线版本
+        ".text",                  # 简版（注意：搜狐 .text 是外层容器，含标题）
+        ".post-content",          # 自媒体文章
+        ".main-content",          # 主要内容
+        "[data-role='article']",  # data属性选择
+        "[class*='article']",     # 模糊匹配
+        "[class*='content']",     # 模糊匹配
     ]
 
     def __init__(self):
@@ -79,6 +92,7 @@ class SohuCrawler(BaseCrawler):
     def crawl(self) -> list[dict]:
         results = []
 
+        # API方案1：热榜 API（可能 503）
         resp = self._request(
             "https://v2.sohu.com/integration-api/mix/region/hot",
             params={"region": "cn", "size": 10}
@@ -105,7 +119,41 @@ class SohuCrawler(BaseCrawler):
             except Exception as e:
                 self.logger.warning(f"[sohu] 热榜 API 失败: {e}")
 
-        # 备选：搜狐首页
+        # API方案2：搜狐热点新闻流 API（热榜API 503时的备选）
+        if not results:
+            try:
+                resp2 = self._request(
+                    "https://v2.sohu.com/integration-api/mix/region/newsList",
+                    params={"secId": "focus", "size": 15}
+                )
+                if resp2:
+                    data2 = resp2.json()
+                    items2 = _safe_list(
+                        data2 if isinstance(data2, list) else data2.get("data")
+                    )
+                    rank = 1
+                    for item in items2:
+                        if not isinstance(item, dict):
+                            continue
+                        title = _safe_str(item.get("title"))
+                        aid = _safe_str(item.get("id") or item.get("articleId"))
+                        url = _safe_str(item.get("url") or item.get("mobileUrl"))
+                        if not url and aid:
+                            url = f"https://www.sohu.com/a/{aid}"
+                        url = self._fix_sohu_url(url)
+                        if title and url:
+                            results.append(self._make_item(
+                                title=title, url=url, rank=rank, category="要闻",
+                            ))
+                            rank += 1
+                            if rank > 10:
+                                break
+                    if results:
+                        return results
+            except Exception as e:
+                self.logger.debug(f"[sohu] 新闻流 API 失败: {e}")
+
+        # 备选：搜狐首页 HTML
         resp = self._request("https://news.sohu.com/")
         if resp is None:
             return results
@@ -142,9 +190,10 @@ class SohuCrawler(BaseCrawler):
 
     def fetch_detail(self, item: dict) -> dict:
         """
-        搜狐详情页抓取：
-        1. PC 端多路提取
-        2. 正文不足时自动尝试移动端 m.sohu.com
+        搜狐详情页抓取（纯静态HTTP）：
+        1. 尝试搜狐内容API（直接获取JSON格式正文）
+        2. PC端静态请求 + JS变量提取
+        3. 移动端 m.sohu.com（返回更简洁的HTML，正文更易提取）
         """
         if not isinstance(item, dict):
             return {}
@@ -154,39 +203,168 @@ class SohuCrawler(BaseCrawler):
 
         from config import DETAIL_FETCH_TIMEOUT
 
-        # PC 端
+        # 策略0：尝试搜狐内容API
+        article_id = self._extract_article_id(url)
+        if article_id:
+            api_result = self._fetch_via_api(article_id, url, DETAIL_FETCH_TIMEOUT)
+            if api_result and len(_safe_str(api_result.get("content"))) >= 100:
+                self.logger.info(f"[sohu] API提取成功: {url[:60]}")
+                return api_result
+
+        # 策略1：PC端请求
+        result = {}
         try:
-            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            headers = {
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/131.0.0.0 Safari/537.36"),
+                "Referer": "https://www.sohu.com/",
+            }
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT, headers=headers)
             if resp is not None:
+                resp.encoding = "utf-8"
                 result = self.parse_detail(resp.text, url)
                 content = _safe_str(result.get("content"))
                 if len(content) >= 100:
                     return result
-                # 正文不足，尝试移动端
-                mobile_url = url.replace("www.sohu.com", "m.sohu.com")
-                if mobile_url != url:
-                    m_resp = self._request(mobile_url, timeout=DETAIL_FETCH_TIMEOUT)
-                    if m_resp is not None:
-                        m_result = self.parse_detail(m_resp.text, mobile_url)
-                        if len(_safe_str(m_result.get("content"))) > len(content):
-                            self.logger.info(f"[sohu] 移动端正文更完整: {url[:60]}")
-                            return m_result
-                # PC端+移动端都正文不足，Playwright兜底
-                return self._playwright_fallback(url, result)
         except Exception as e:
-            self.logger.warning(f"[sohu] 详情页抓取失败: {url[:60]} | {e}")
+            self.logger.debug(f"[sohu] PC端请求失败: {url[:60]} | {e}")
 
-        # 静态请求全部失败，Playwright兜底
-        return self._playwright_fallback(url, {})
+        # 策略2：移动端请求（搜狐移动端返回更完整的静态HTML）
+        try:
+            mobile_url = url.replace("www.sohu.com", "m.sohu.com")
+            if mobile_url != url:
+                m_headers = {
+                    "User-Agent": ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                                   "AppleWebKit/605.1.15 Safari/604.1"),
+                    "Referer": "https://m.sohu.com/",
+                }
+                m_resp = self._request(mobile_url, timeout=DETAIL_FETCH_TIMEOUT,
+                                       headers=m_headers)
+                if m_resp is not None:
+                    m_resp.encoding = "utf-8"
+                    m_result = self.parse_detail(m_resp.text, mobile_url)
+                    if len(_safe_str(m_result.get("content"))) > len(_safe_str(result.get("content"))):
+                        self.logger.info(f"[sohu] 移动端正文更完整: {url[:60]}")
+                        result = m_result
+        except Exception as e:
+            self.logger.debug(f"[sohu] 移动端请求失败: {url[:60]} | {e}")
+
+        # Playwright 渲染由 main.py 统一批量处理
+        return result
+
+    @staticmethod
+    def _extract_article_id(url: str) -> str:
+        """从搜狐 URL 提取文章 ID"""
+        if not url:
+            return ""
+        m = re.search(r'/a/(\d+)', url)
+        if m:
+            return m.group(1)
+        return ""
+
+    def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
+        """通过搜狐内容API获取文章正文"""
+        result = {
+            "content_html": "", "content": "", "images": [],
+            "videos": [], "thumbnail": "", "author": "", "pub_time": "",
+        }
+        api_urls = [
+            f"https://v2.sohu.com/article-detail-api/article/{article_id}",
+            f"https://api.sohu.com/api/v3/article/{article_id}",
+        ]
+        session = self._get_session()
+        headers = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"),
+            "Referer": "https://www.sohu.com/",
+        }
+        for api_url in api_urls:
+            try:
+                resp = session.get(api_url, headers=headers, timeout=timeout)
+                if resp.status_code in (404, 403, 503):
+                    continue
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                if not isinstance(data, dict):
+                    continue
+                # 搜索正文字段
+                content_html = ""
+                for key in ("content", "articleContent", "body", "text", "htmlContent"):
+                    val = data.get(key)
+                    if isinstance(val, str) and len(val) > 200 and "<p" in val.lower():
+                        content_html = val
+                        break
+                if not content_html:
+                    # 深搜 data 子结构
+                    inner = data.get("data", {})
+                    if isinstance(inner, dict):
+                        for key in ("content", "articleContent", "body"):
+                            val = inner.get(key)
+                            if isinstance(val, str) and len(val) > 200:
+                                content_html = val
+                                break
+                if content_html:
+                    from utils.content_extractor import sanitize_html
+                    result["content_html"] = sanitize_html(content_html)
+                    try:
+                        soup = BeautifulSoup(content_html, "lxml")
+                        result["content"] = re.sub(
+                            r"\n\s*\n", "\n\n", soup.get_text(separator="\n")
+                        ).strip()
+                    except Exception:
+                        pass
+                    result["author"] = _safe_str(
+                        data.get("author") or data.get("authorName") or
+                        data.get("source") or data.get("mediaNick", "")
+                    )
+                    result["pub_time"] = _safe_str(
+                        data.get("pubTime") or data.get("publishTime") or
+                        data.get("createTime", "")
+                    )
+                    if result["content"]:
+                        return result
+            except Exception as e:
+                self.logger.debug(f"[sohu] API {api_url} 失败: {e}")
+                continue
+        return result
 
     def parse_detail(self, html: str, url: str) -> dict:
         """
         搜狐专用详情页解析。
         先尝试从 JS 变量提取正文，再用 CSS 选择器 + readability 兜底。
+        重要发现：搜狐文章页的静态 HTML 中正文是完整存在的，
+        关键是 article#mp-editor 选择器 + 预清理噪音元素。
         """
         if not html or not isinstance(html, str):
             from utils.content_extractor import extract_content
             return extract_content("", url, selectors=self.detail_selectors)
+
+        # 预处理：移除搜狐特有的噪音元素
+        try:
+            soup_pre = BeautifulSoup(html, "lxml")
+            # 移除 "返回搜狐，查看更多" 链接及其父 <p>
+            back_link = soup_pre.find("a", id="backsohucom")
+            if back_link:
+                parent_p = back_link.find_parent("p")
+                if parent_p:
+                    parent_p.decompose()
+                else:
+                    back_link.decompose()
+            # 移除 "责任编辑" 声明
+            for el in soup_pre.find_all("span", class_="backword"):
+                parent = el.find_parent("p") or el.find_parent("div")
+                if parent:
+                    parent.decompose()
+                else:
+                    el.decompose()
+            # 移除平台声明
+            for el in soup_pre.select(".statement, .article-source-wrap"):
+                el.decompose()
+            html = str(soup_pre)
+        except Exception:
+            pass
 
         # 策略1：从 JS 变量直接提取完整正文
         js_result = self._extract_from_js(html, url)
@@ -195,7 +373,7 @@ class SohuCrawler(BaseCrawler):
             self._enrich_result(js_result, html, url)
             return js_result
 
-        # 策略2：CSS 选择器 + readability
+        # 策略2：CSS 选择器 + readability（搜狐静态 HTML 已含完整正文）
         from utils.content_extractor import extract_content
         result = extract_content(html, url, selectors=self.detail_selectors)
 

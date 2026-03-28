@@ -1,13 +1,18 @@
 """
-澎湃新闻爬虫 - 爬取澎湃热榜 TOP 10
+澎湃新闻爬虫 - 爬取澎湃推荐 TOP 10
+
+列表获取策略（按优先级）：
+  1. 首页 __NEXT_DATA__ JSON（Next.js SSR 内嵌数据，最稳定）
+     包含 recommendImg（5条）+ recommendTxt（6条）+ channelContent
+  2. 首页 HTML <a> 标签匹配（兜底）
 
 正文获取策略（按优先级）：
-  1. 澎湃新闻内容 API（直接 JSON，最稳定）
-     https://www.thepaper.cn/newsDetail_forward_{contId}?fromH5=true
-     备用: https://api.thepaper.cn/content/article/detail/{contId}
-  2. __NEXT_DATA__ JSON（Next.js 页面内嵌数据）
-     兼容所有已知路径结构（普通/视频/图集/旧版）
-  3. 通用 readability 提取器（兜底）
+  1. __NEXT_DATA__ JSON（文章页 Next.js SSR 内嵌数据）
+     路径: props.pageProps.detailData.contentDetail
+  2. CSS 选择器 + readability 提取器（兜底）
+
+注：原热榜 API（cache.thepaper.cn/contentapi/hotspot/list 等）
+    已全部失效（返回404或HTML），不再尝试。
 
 图片：imgUrlList 列表 + 正文 <img> 标签
 视频：videoDetailInfo 字段，嵌入正文顶部
@@ -21,17 +26,9 @@ from crawlers.base import BaseCrawler
 
 logger = logging.getLogger(__name__)
 
-# 澎湃新闻内容 API（按实际可用性排序）
-# 经日志验证：cache.thepaper.cn 和 api.thepaper.cn 均返回 404
-# 改用以下实测可用接口
-_THEPAPER_DETAIL_APIS = [
-    # 方式1: 直接请求文章页加 fromH5 参数获取 JSON 响应
-    ("https://www.thepaper.cn/newsDetail_forward_{cid}", None),
-    # 方式2: 澎湃内容详情接口
-    ("https://www.thepaper.cn/baijiahao_{cid}", None),
-    # 方式3: 澎湃 API 网关
-    ("https://www.thepaper.cn/api/content/article", {"id": "{cid}"}),
-]
+# 注：澎湃所有已知内容 API（cache.thepaper.cn、api.thepaper.cn、
+# newsDetail_forward 等）均已失效（返回 404 或 HTML 而非 JSON）。
+# 正文获取完全依赖页面 __NEXT_DATA__ + readability 兜底。
 
 
 def _safe_str(val, default="") -> str:
@@ -87,9 +84,14 @@ def _build_video_tag(vid_url: str, poster: str, vtype: str) -> str:
 class ThePaperCrawler(BaseCrawler):
 
     detail_selectors = [
-        ".cententWrap", "[class*='cententWrap']",
-        ".news_txt", "article",
-        "[class*='article']", "[class*='content']",
+        "[class*='cententWrap']",  # 澎湃正文容器（有hash后缀如 cententWrap__UojXm）
+        ".cententWrap",            # 无hash版本
+        ".news_txt",               # 旧版正文
+        "[class*='leftcontent']",  # 左侧内容区
+        "[class*='normalContentWrap']",  # 普通内容包裹
+        "article",                 # HTML5 语义标签
+        "[class*='article']",      # 模糊匹配
+        "[class*='content']",      # 模糊匹配
     ]
 
     def __init__(self):
@@ -106,57 +108,24 @@ class ThePaperCrawler(BaseCrawler):
     def crawl(self) -> list[dict]:
         results = []
 
-        # 澎湃热榜 API（多个备用端点）
-        hotspot_apis = [
-            (f"{self.base_url}/api/feed/hotspot/list", {"pageSize": 10, "pageNum": 1}),
-            (f"{self.base_url}/api/feed/hot", {"size": 10}),
-            ("https://cache.thepaper.cn/contentapi/hotspot/list", {"pageSize": 10}),
-        ]
-        for api_url, params in hotspot_apis:
-            try:
-                resp = self._request(api_url, params=params)
-                if not resp:
-                    continue
-                data = resp.json()
-                items_raw = data.get("data", {})
-                if isinstance(items_raw, dict):
-                    items_raw = (items_raw.get("list")
-                                 or items_raw.get("hotList")
-                                 or items_raw.get("data")
-                                 or [])
-                items = _safe_list(items_raw)
-                if not items:
-                    continue
-                for i, item in enumerate(items[:10], 1):
-                    if not isinstance(item, dict):
-                        continue
-                    title = _safe_str(item.get("title") or item.get("name"))
-                    cid = _safe_str(item.get("contId") or item.get("id"))
-                    url = _safe_str(item.get("url"))
-                    if not url and cid:
-                        url = f"{self.base_url}/newsDetail_forward_{cid}"
-                    if title and url:
-                        results.append(self._make_item(
-                            title=title, url=url, rank=i,
-                            summary=_safe_str(item.get("summary")),
-                            category="热榜",
-                        ))
-                if results:
-                    self.logger.info(f"[thepaper] 热榜获取成功: {api_url.split('/')[-1]}")
-                    return results
-            except Exception as e:
-                self.logger.debug(f"[thepaper] 热榜 API 失败: {api_url} | {e}")
-                continue
-
-        # 备选：首页 HTML
         resp = self._request(self.base_url)
         if resp is None:
             return results
+
+        resp.encoding = "utf-8"
+        html = resp.text
+
+        # --- 来源1: 首页 __NEXT_DATA__（包含所有推荐文章，比 <a> 标签更全） ---
+        results = self._extract_list_from_next_data(html)
+        if len(results) >= 10:
+            self.logger.info(f"[thepaper] 首页 __NEXT_DATA__ 获取: {len(results)} 条")
+            return results[:10]
+
+        # --- 来源2: 首页 HTML <a> 标签（兜底补充） ---
+        seen = {item["url"] for item in results}
+        rank = len(results) + 1
         try:
-            resp.encoding = "utf-8"
-            soup = BeautifulSoup(resp.text, "lxml")
-            rank = 1
-            seen = set()
+            soup = BeautifulSoup(html, "lxml")
             for a in soup.find_all("a", href=True):
                 href = _safe_str(a.get("href"))
                 title = a.get_text(strip=True)
@@ -169,14 +138,99 @@ class ThePaperCrawler(BaseCrawler):
                 if href in seen:
                     continue
                 seen.add(href)
+                # 去除 "推荐" 前缀（首页 HTML 中部分链接标题带有推荐前缀）
+                title = re.sub(r"^推荐", "", title).strip()
+                if not title:
+                    continue
                 results.append(self._make_item(
-                    title=title, url=href, rank=rank, category="热榜"
+                    title=title, url=href, rank=rank, category="推荐"
                 ))
                 rank += 1
                 if rank > 10:
                     break
         except Exception as e:
-            self.logger.warning(f"[thepaper] 首页解析失败: {e}")
+            self.logger.warning(f"[thepaper] 首页 HTML 解析失败: {e}")
+
+        src = "__NEXT_DATA__+HTML" if results else "HTML"
+        self.logger.info(f"[thepaper] 首页获取({src}): {len(results)} 条")
+        return results
+
+    def _extract_list_from_next_data(self, html: str) -> list[dict]:
+        """
+        从首页 __NEXT_DATA__ 提取推荐文章列表。
+        数据结构: props.pageProps.data 下包含：
+          - recommendImg: list[dict] — 头图推荐（约5条）
+          - recommendTxt: list[list[dict]] — 文字推荐（嵌套列表，约6条）
+          - recommendChannels[].contentList: list[dict] — 频道推荐
+        """
+        results = []
+        try:
+            soup = BeautifulSoup(html, "lxml")
+            script = soup.find("script", id="__NEXT_DATA__")
+            if not script or not script.string:
+                return results
+
+            data = json.loads(_safe_str(script.string))
+            if not isinstance(data, dict):
+                return results
+
+            page_data = _safe_dict(
+                _safe_dict(
+                    _safe_dict(data.get("props")).get("pageProps")
+                ).get("data")
+            )
+            if not page_data:
+                return results
+
+            seen_ids = set()
+            rank = 1
+
+            # forwardType="4" 表示外部跳转（新华社/人民日报/央视等），
+            # 这些 URL 会被 307 重定向到外部站点，静态请求无法获取正文。
+            # 注：forwardType 在 JSON 中是字符串类型。
+            _EXTERNAL_FORWARD_TYPES = {"4"}
+
+            def _add_item(item_data: dict, category: str):
+                nonlocal rank
+                if not isinstance(item_data, dict) or rank > 20:
+                    return
+                cid = _safe_str(item_data.get("contId") or item_data.get("id"))
+                name = _safe_str(item_data.get("name") or item_data.get("title"))
+                if not cid or not name or cid in seen_ids:
+                    return
+                # 跳过外部跳转文章（forwardType="4" → 307 重定向到新华社/人民日报等）
+                fwd_type = _safe_str(item_data.get("forwardType"))
+                if fwd_type in _EXTERNAL_FORWARD_TYPES:
+                    return
+                seen_ids.add(cid)
+                url = f"{self.base_url}/newsDetail_forward_{cid}"
+                results.append(self._make_item(
+                    title=name, url=url, rank=rank,
+                    summary=_safe_str(item_data.get("summary")),
+                    category=category,
+                ))
+                rank += 1
+
+            # 1. recommendImg — 头图推荐
+            for item in _safe_list(page_data.get("recommendImg")):
+                _add_item(item, "头条")
+
+            # 2. recommendTxt — 文字推荐（嵌套列表结构）
+            for group in _safe_list(page_data.get("recommendTxt")):
+                if isinstance(group, list):
+                    for item in group:
+                        _add_item(item, "推荐")
+                elif isinstance(group, dict):
+                    _add_item(group, "推荐")
+
+            # 3. recommendChannels[].contentList — 频道推荐
+            for channel in _safe_list(page_data.get("recommendChannels")):
+                if isinstance(channel, dict):
+                    for item in _safe_list(channel.get("contentList")):
+                        _add_item(item, "频道")
+
+        except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as e:
+            self.logger.debug(f"[thepaper] 首页 __NEXT_DATA__ 解析失败: {e}")
 
         return results
 
@@ -186,10 +240,13 @@ class ThePaperCrawler(BaseCrawler):
 
     def fetch_detail(self, item: dict) -> dict:
         """
-        澎湃新闻详情页抓取。
-        策略1：内容 API（最稳定，直接返回 JSON）
-        策略2：页面 HTML 中的 __NEXT_DATA__
-        策略3：readability 兜底
+        澎湃新闻详情页抓取（纯静态HTTP）。
+        策略1：页面 HTML 中的 __NEXT_DATA__（Next.js SSR，最可靠）
+        策略2：Next.js _next/data JSON API（SPA页面__NEXT_DATA__不含文章数据时）
+        策略3：CSS选择器 + readability 兜底
+
+        注：部分首页推荐文章（如新华社转载）会被 307 重定向到外部站点，
+        这些 URL 没有 __NEXT_DATA__，由通用提取器兜底处理。
         """
         if not isinstance(item, dict):
             return {}
@@ -199,38 +256,46 @@ class ThePaperCrawler(BaseCrawler):
 
         from config import DETAIL_FETCH_TIMEOUT
 
-        # 策略1：内容 API
-        article_id = _extract_thepaper_id(url)
-        if article_id:
-            result = self._fetch_via_api(article_id, url, DETAIL_FETCH_TIMEOUT)
-            if result and len(_safe_str(result.get("content"))) > 100:
-                self.logger.info(f"[thepaper] API 提取成功: {url[:60]}")
-                return result
+        headers = {
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/131.0.0.0 Safari/537.36"),
+            "Referer": "https://www.thepaper.cn/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        }
 
-        # 策略2：HTML（__NEXT_DATA__ + readability）
         result = {}
+        html_text = ""
         try:
-            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT)
+            resp = self._request(url, timeout=DETAIL_FETCH_TIMEOUT, headers=headers)
             if resp is not None:
-                result = self.parse_detail(resp.text, url)
-                if result and len(_safe_str(result.get("content"))) >= 100:
-                    return result
+                resp.encoding = "utf-8"
+                html_text = resp.text
+                # 检测是否被重定向到外部站点（如新华社 xinhuaxmt.com）
+                final_url = getattr(resp, "url", url) or url
+                if "thepaper.cn" not in final_url:
+                    self.logger.debug(
+                        f"[thepaper] 外部重定向: {url[:50]} → {final_url[:50]}"
+                    )
+                    # 仍然尝试提取（外部页面用通用提取器可能有效）
+                    from utils.content_extractor import extract_content
+                    result = extract_content(resp.text, final_url)
+                else:
+                    result = self.parse_detail(resp.text, url)
         except Exception as e:
             self.logger.debug(f"[thepaper] HTML请求失败: {url[:60]} | {e}")
 
-        # 策略3：Playwright 浏览器渲染兜底
-        return self._playwright_fallback(url, result)
+        # 策略2：如果__NEXT_DATA__没有文章数据，尝试 _next/data API
+        if len(_safe_str(result.get("content"))) < 50:
+            api_result = self._fetch_via_next_data_api(url, html_text, headers,
+                                                       DETAIL_FETCH_TIMEOUT)
+            if api_result and len(_safe_str(api_result.get("content"))) > len(
+                    _safe_str(result.get("content"))):
+                result = api_result
 
-    def _fetch_via_api(self, article_id: str, url: str, timeout: int) -> dict:
-        """
-        通过澎湃新闻内容 API 获取完整文章。
-        经日志验证 cache.thepaper.cn 和 api.thepaper.cn 均404。
-        不再做无效API尝试，直接返回空，由 fetch_detail 走HTML解析路径。
-        保留接口框架以便未来发现可用接口时快速接入。
-        """
-        # 目前已知可用接口为空，直接返回让 HTML 解析接手
-        # 避免大量 404 请求浪费时间和日志
-        return {}
+        # Playwright 渲染由 main.py 统一批量处理
+        return result
 
     def parse_detail(self, html: str, url: str) -> dict:
         """从 HTML 提取正文：__NEXT_DATA__ 优先，readability 兜底"""
@@ -296,31 +361,45 @@ class ThePaperCrawler(BaseCrawler):
 
         # 路径列表（按概率从高到低排列）
         candidates = [
-            # 普通文章（最常见）
+            # 普通文章（最常见）—— detailData.contentDetail
             lambda p: _safe_dict(p.get("detailData", {})).get("contentDetail"),
+            # detailData.detailData（双层嵌套，部分版本）
+            lambda p: _safe_dict(
+                _safe_dict(p.get("detailData", {})).get("detailData", {})
+            ).get("contentDetail"),
+            # detailData 本身就是 contentDetail（某些页面结构）
+            lambda p: p.get("detailData"),
             # 视频文章
             lambda p: p.get("detail"),
             # 图集文章
             lambda p: p.get("newsDetail"),
             # 直接在 pageProps
             lambda p: p.get("contentDetail"),
+            # newsData.detail.contentDetail（新版本嵌套）
+            lambda p: _safe_dict(
+                _safe_dict(p.get("newsData", {})).get("detail", {})
+            ).get("contentDetail"),
             # data 子层
             lambda p: _safe_dict(p.get("data", {})).get("contentDetail"),
             lambda p: _safe_dict(p.get("data", {})).get("detail"),
             lambda p: _safe_dict(p.get("data", {})).get("newsDetail"),
-            # detailData 直接是文章
-            lambda p: p.get("detailData"),
             # 其他嵌套
             lambda p: _safe_dict(p.get("initialData", {})).get("contentDetail"),
             lambda p: _safe_dict(p.get("serverData", {})).get("contentDetail"),
+            # contId 在 pageProps 顶层但 contentDetail 在更深层
+            lambda p: _safe_dict(
+                _safe_dict(p.get("detailData", {})).get("data", {})
+            ).get("contentDetail"),
         ]
 
         for path_fn in candidates:
             try:
                 val = path_fn(page_props)
                 if isinstance(val, dict) and val:
-                    # 验证是否是文章数据（有 content 或 name 字段）
-                    if val.get("content") or val.get("name") or val.get("contTxt"):
+                    # 验证是否是文章数据：有正文内容 或 有标题字段
+                    if (val.get("content") or val.get("name") or
+                            val.get("contTxt") or val.get("contId") or
+                            val.get("summary")):
                         return val
             except Exception:
                 continue
@@ -331,18 +410,86 @@ class ThePaperCrawler(BaseCrawler):
         """
         深度递归搜索包含 content 且是文章数据的字典。
         用于处理未知的新 pageProps 结构。
+        放宽匹配条件：只要有 content/contTxt/txt 字段且长度足够即可。
         """
-        if depth > 6 or not isinstance(data, dict):
+        if depth > 8 or not isinstance(data, dict):
             return {}
         # 判断当前节点是否是文章数据
-        if (data.get("content") or data.get("contTxt")) and data.get("name"):
+        content_val = (data.get("content") or data.get("contTxt")
+                       or data.get("txt") or data.get("contentHtml") or "")
+        # 条件1：有 content + name（标准文章）
+        if content_val and data.get("name"):
             return data
+        # 条件2：有 content 且长度 > 200（像是正文HTML），且有 contId/id（文章ID）
+        if (isinstance(content_val, str) and len(content_val) > 200
+                and (data.get("contId") or data.get("id"))):
+            return data
+        # 条件3：有 contentDetail 子字段
+        cd = data.get("contentDetail")
+        if isinstance(cd, dict) and cd:
+            cd_content = (cd.get("content") or cd.get("contTxt")
+                          or cd.get("txt") or "")
+            if isinstance(cd_content, str) and len(cd_content) > 50:
+                return cd
         # 递归子节点
         for key, val in data.items():
             if isinstance(val, dict):
                 found = ThePaperCrawler._deep_find_detail(val, depth + 1)
                 if found:
                     return found
+        return {}
+
+    def _fetch_via_next_data_api(self, url: str, html_text: str,
+                                  headers: dict, timeout: int) -> dict:
+        """
+        通过 Next.js 的 _next/data API 获取文章数据。
+        Next.js 应用在客户端路由时使用 /_next/data/{buildId}/{path}.json 端点，
+        这个端点返回与 __NEXT_DATA__ 相同结构的 JSON 数据。
+        """
+        # 从页面 HTML 提取 buildId
+        build_id = ""
+        if html_text:
+            m = re.search(r'"buildId"\s*:\s*"([^"]+)"', html_text)
+            if m:
+                build_id = m.group(1)
+        if not build_id:
+            return {}
+
+        # 从 URL 提取文章 ID 路径
+        article_id = _extract_thepaper_id(url)
+        if not article_id:
+            return {}
+
+        # 构建 _next/data API URL
+        api_url = (f"https://www.thepaper.cn/_next/data/{build_id}/"
+                   f"newsDetail_forward_{article_id}.json")
+        try:
+            api_headers = dict(headers)
+            api_headers["Accept"] = "application/json"
+            resp = self._request(api_url, timeout=timeout, headers=api_headers)
+            if resp is not None and resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict):
+                    page_props = _safe_dict(
+                        _safe_dict(data.get("pageProps"))
+                    )
+                    if not page_props:
+                        page_props = _safe_dict(
+                            _safe_dict(data.get("props", {})).get("pageProps")
+                        )
+                    detail = self._find_detail_in_props(page_props)
+                    if not detail:
+                        detail = self._deep_find_detail(page_props)
+                    if detail and isinstance(detail, dict):
+                        result = self._parse_detail_dict(detail, url)
+                        if len(_safe_str(result.get("content"))) > 50:
+                            self.logger.info(
+                                f"[thepaper] _next/data API 成功: {url[:50]}"
+                            )
+                            return result
+        except Exception as e:
+            self.logger.debug(f"[thepaper] _next/data API 失败: {url[:50]} | {e}")
+
         return {}
 
     def _parse_detail_dict(self, detail: dict, url: str) -> dict:
@@ -356,8 +503,11 @@ class ThePaperCrawler(BaseCrawler):
         if not isinstance(detail, dict):
             return result
 
-        # 正文 HTML
-        content_html = _safe_str(detail.get("content") or detail.get("contTxt"))
+        # 正文 HTML（多个可能的字段名，按优先级）
+        content_html = _safe_str(
+            detail.get("content") or detail.get("contTxt")
+            or detail.get("txt") or detail.get("contentHtml")
+        )
 
         # 图片列表
         images = []
@@ -454,12 +604,14 @@ class ThePaperCrawler(BaseCrawler):
             author = author.get("name", "") or author.get("nickname", "")
         result["author"] = _safe_str(author)
 
-        # 发布时间
-        result["pub_time"] = _safe_str(
-            detail.get("pubTime") or detail.get("publishTime")
-            or detail.get("interactionNum", {}).get("time") if isinstance(
-                detail.get("interactionNum"), dict) else ""
-            or detail.get("pubTime")
+        # 发布时间（逐步回退：pubTime → publishTime → interactionNum.time）
+        pub_time = (
+            detail.get("pubTime")
+            or detail.get("publishTime")
+            or detail.get("pubDate")
         )
+        if not pub_time and isinstance(detail.get("interactionNum"), dict):
+            pub_time = detail["interactionNum"].get("time", "")
+        result["pub_time"] = _safe_str(pub_time)
 
         return result
