@@ -66,18 +66,25 @@ def main():
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
                 )
                 page = ctx.new_page()
-                page.route("**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot}",lambda r:r.abort())
+                # 屏蔽所有非必要资源（图片/字体/CSS/广告/统计），只保留HTML和JS
+                page.route("**/*.{png,jpg,jpeg,gif,svg,ico,woff,woff2,ttf,eot,css}",lambda r:r.abort())
                 page.route("**/*google*analytics*",lambda r:r.abort())
                 page.route("**/*cnzz*",lambda r:r.abort())
-                page.route("**/*baidu.com/hm*",lambda r:r.abort())
-                page.goto(url,wait_until="domcontentloaded",timeout=timeout*1000)
+                page.route("**/*baidu.com*",lambda r:r.abort())
+                page.route("**/*bdstatic.com*",lambda r:r.abort())
+                page.route("**/*doubleclick*",lambda r:r.abort())
+                page.route("**/*adservice*",lambda r:r.abort())
+                page.route("**/*adsense*",lambda r:r.abort())
+                # 页面加载超时固定10秒（够JS渲染正文）
+                page.goto(url,wait_until="domcontentloaded",timeout=10000)
+                # 等待正文容器出现（最多3秒）
                 if ws:
                     try:
-                        page.wait_for_selector(ws,timeout=min(timeout*1000,8000))
+                        page.wait_for_selector(ws,timeout=3000)
                     except:
                         pass
-                if wt > 0:
-                    page.wait_for_timeout(wt)
+                # JS渲染等待1.5秒（够大部分框架完成渲染）
+                page.wait_for_timeout(1500)
                 html = page.content()
                 page.close()
                 ctx.close()
@@ -228,8 +235,8 @@ def fetch_page_html(url: str, timeout: int = 20,
             _worker_proc.stdin.write(req.encode("utf-8"))
             _worker_proc.stdin.flush()
 
-            # 读取响应元数据（带超时）
-            resp_line = _readline_with_timeout(_worker_proc, timeout + 15)
+            # 读取响应元数据（带超时，页面10秒+JS1.5秒+通信余量3.5秒=15秒）
+            resp_line = _readline_with_timeout(_worker_proc, timeout + 5)
             if resp_line is None:
                 logger.warning(f"[browser] 渲染超时: {url[:60]}")
                 _kill_worker()

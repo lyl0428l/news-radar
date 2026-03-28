@@ -389,13 +389,13 @@ class BaseCrawler(ABC):
         # --- 阶段2: Playwright浏览器渲染（正文不足时自动触发）---
         try:
             from utils.browser import fetch_page_html
-            # 构建等待选择器（优先用子类定义的选择器）
             wait_sel = None
             if self.detail_selectors:
                 wait_sel = self.detail_selectors[0]
+            # timeout=12秒，wait_time=1500ms，总计约13.5秒/篇
             rendered_html = fetch_page_html(
-                url, timeout=DETAIL_FETCH_TIMEOUT,
-                wait_selector=wait_sel, wait_time=3000,
+                url, timeout=12,
+                wait_selector=wait_sel, wait_time=1500,
             )
             if rendered_html:
                 rendered_result = self.parse_detail(rendered_html, url)
@@ -438,9 +438,10 @@ class BaseCrawler(ABC):
         try:
             from utils.browser import fetch_page_html
             wait_sel = self.detail_selectors[0] if self.detail_selectors else None
+            # timeout=12秒（页面加载10秒+JS渲染1.5秒+通信开销），wait_time=1500ms
             rendered_html = fetch_page_html(
-                url, timeout=DETAIL_FETCH_TIMEOUT,
-                wait_selector=wait_sel, wait_time=3000,
+                url, timeout=12,
+                wait_selector=wait_sel, wait_time=1500,
             )
             if rendered_html:
                 rendered_result = self.parse_detail(rendered_html, url)
