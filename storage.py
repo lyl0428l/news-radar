@@ -360,10 +360,10 @@ def _deserialize_row(row) -> dict:
 
 def check_urls_have_content(urls: list) -> set:
     """
-    批量检查哪些 URL 在 DB 中已有足够正文。
+    批量检查哪些 URL 在 DB 中已有足够正文（>=200字）。
     返回已有正文的 URL 集合。用于优化：跳过详情页抓取。
-    只要正文长度 > 50 字即认为已抓取完成，不再强制要求图片和作者
-    （原条件过严导致界面新闻等被误判为"未完整"而反复重抓）。
+    200字阈值可过滤掉只抓到导航栏/版权声明等垃圾文本的记录，
+    让它们在下一轮被 Playwright 重新渲染。
     """
     if not urls:
         return set()
@@ -384,7 +384,7 @@ def check_urls_have_content(urls: list) -> set:
                 SELECT url_hash FROM news
                 WHERE url_hash IN ({placeholders})
                 AND content IS NOT NULL AND content != ''
-                AND length(content) > 50
+                AND length(content) > 200
             """, hash_values)
             found_hashes = {row[0] for row in cursor.fetchall()}
             for h, u in batch:

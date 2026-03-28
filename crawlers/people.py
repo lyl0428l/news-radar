@@ -8,9 +8,13 @@ from crawlers.base import BaseCrawler, MIN_TITLE_LEN_ZH
 
 class PeopleCrawler(BaseCrawler):
 
-    # .rm_txt_con 是人民网文章正文容器（含 bza 分享区 + 正文段落）
-    # .col-1 是更大的列容器，作为二级回退
-    detail_selectors = [".rm_txt_con", "#rwb_zw", ".text_con", ".col-1", ".article"]
+    # 人民网正文容器选择器（覆盖多版本页面结构）
+    detail_selectors = [
+        ".rm_txt_con", "#rwb_zw", ".text_con",
+        ".col-1", ".article", ".text_c",
+        "#p_content", ".show_text", ".content",
+        "[class*='article']", "[class*='content']",
+    ]
 
     def parse_detail(self, html: str, url: str) -> dict:
         """人民网专用详情页解析：通用提取器 + 作者/来源/时间补充"""
