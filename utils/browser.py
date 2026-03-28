@@ -154,8 +154,8 @@ def _start_worker():
         _worker_start_time = time.time()
         _request_count = 0
 
-        # 等待 ready（最多30秒）
-        line = _readline_with_timeout(_worker_proc, 30)
+        # 等待 ready（最多60秒，Chromium首次启动较慢）
+        line = _readline_with_timeout(_worker_proc, 60)
         if line is None:
             logger.error("[browser] Worker 启动超时")
             _kill_worker()
